@@ -1,0 +1,7 @@
+[target.'cfg(target_family = "wasm")']
+rustflags = "-C target-feature=+simd128 --cfg getrandom_backend=\"wasm_js\""
+
+#[target.wasm32-unknown-unknown]
+#rustflags = "-C target-feature=+mutable-globals,+atomics,+bulk-memory,+simd128"
+#[unstable]
+#build-std = ["panic_abort", "std"]

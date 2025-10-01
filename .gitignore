@@ -1,0 +1,5 @@
+/target
+/pkg
+/res
+/.vscode
+.DS_Store

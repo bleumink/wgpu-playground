@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WGPU Viewer</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+      }
+      canvas {
+        background-color: black;
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        max-width: 2048px;
+        max-height: 2048px;
+        margin: auto;
+      }
+    </style>
+  </head>
+
+  <body id="wasm-example">
+    <canvas id="canvas"></canvas>
+    <script type="module">
+      import init from "./pkg/wgpu_web.js";
+      init();
+    </script>
+  </body>
+</html>
