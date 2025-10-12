@@ -11,7 +11,7 @@ use winit::{
 #[cfg(target_family = "wasm")]
 use wasm_bindgen::prelude::*;
 
-use crate::{renderer::Renderer, state::State};
+use crate::{renderer::Renderer, state::State, surface::Surface};
 
 #[cfg(target_family = "wasm")]
 fn get_canvas(canvas_id: &str) -> web_sys::HtmlCanvasElement {
@@ -21,12 +21,6 @@ fn get_canvas(canvas_id: &str) -> web_sys::HtmlCanvasElement {
     let document = window.document().unwrap_throw();
     let canvas = document.get_element_by_id(canvas_id).unwrap_throw();
     canvas.unchecked_into()
-}
-
-#[cfg(target_family = "wasm")]
-fn request_animation_frame(f: &Closure<dyn FnMut()>) {
-    let window = web_sys::window().unwrap_throw();
-    window.request_animation_frame(f.as_ref().unchecked_ref()).unwrap();
 }
 
 pub struct App {
@@ -76,34 +70,43 @@ impl ApplicationHandler<State> for App {
         #[cfg(not(target_family = "wasm"))]
         {
             use futures_lite::future;
+            use winit::dpi::LogicalSize;
 
-            let mut renderer = future::block_on(Renderer::new(Arc::clone(&window), render_rx, result_tx)).unwrap();
+            let monitor = window.current_monitor().unwrap();
+            let size = monitor.size();
+            let scale = 0.50;
+            let target_size = LogicalSize::new(size.width as f64 * scale, size.height as f64 * scale);
+            let _ = window.request_inner_size(target_size);
+
+            let (surface, context) = future::block_on(Surface::initialize(Arc::clone(&window))).unwrap();
+            let mut renderer = future::block_on(Renderer::new(context, render_rx, result_tx)).unwrap();
+
             std::thread::spawn(move || {
                 if let Err(error) = renderer.run() {
                     log::error!("Renderer encountered an error: {}", error);
                 }
             });
 
-            let state = future::block_on(State::new(window, render_tx, result_rx)).unwrap();
+            let state = future::block_on(State::new(window, surface, render_tx, result_rx)).unwrap();
             self.state = Some(state);
         }
 
         #[cfg(target_family = "wasm")]
         {
-            let render_window = Arc::clone(&window);
-            wasm_bindgen_futures::spawn_local(async move {
-                Renderer::new(render_window, render_rx, result_tx)
-                    .await
-                    .expect("Unable to create renderer")
-                    .run_web();
-            });
-
             if let Some(proxy) = self.proxy.take() {
                 wasm_bindgen_futures::spawn_local(async move {
+                    let (surface, context) = Surface::initialize(Arc::clone(&window))
+                        .await
+                        .expect("Unable to initialize surface");
+
+                    let renderer = Renderer::new(context, render_rx, result_tx)
+                        .await
+                        .expect("Unable to create renderer");
+
                     assert!(
                         proxy
                             .send_event(
-                                State::new(window, render_tx, result_rx)
+                                State::new(window, surface, render_tx, result_rx, renderer)
                                     .await
                                     .expect("Unable to create canvas")
                             )
@@ -162,10 +165,14 @@ impl ApplicationHandler<State> for App {
             None => return,
         };
 
+        if state.ui_mut().is_input_consumed(&event) {
+            return;
+        }
+
         match event {
-            WindowEvent::CloseRequested => state.exit(event_loop),
+            WindowEvent::CloseRequested => state.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::RedrawRequested => state.update(),
+            WindowEvent::RedrawRequested => state.update(event_loop),
             WindowEvent::MouseInput {
                 state: button_state,
                 button,
@@ -189,7 +196,7 @@ impl ApplicationHandler<State> for App {
             } => {
                 // TODO Move elsewhere
                 if code == KeyCode::Escape && key_state.is_pressed() {
-                    event_loop.exit();
+                    state.exit();
                 } else {
                     state.camera_controller_mut().handle_key(code, key_state);
                     // self.handle_key(event_loop, code, key_state.is_pressed())

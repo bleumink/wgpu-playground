@@ -10,9 +10,11 @@ use instant::Instant;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_family = "wasm")]
-use crate::worker::{Task, WorkerPool};
+use crate::worker::{LoadTask, UploadTask, WorkerPool, AssetKind};
 
-use crate::{instance::Instance, model::ModelBuffer, pointcloud::PointcloudBuffer, renderer::RenderEvent};
+use crate::{
+    instance::Instance, model::ModelBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand,
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ResourcePath {
@@ -105,8 +107,8 @@ impl std::fmt::Display for ResourcePath {
 }
 
 pub enum Asset {
-    Pointcloud(PointcloudBuffer, Option<String>, Option<Vec<LoadOptions>>),
-    Model(ModelBuffer, Option<String>, Option<Vec<LoadOptions>>),
+    Pointcloud(PointcloudBuffer, Option<String>),
+    Model(ModelBuffer, Option<String>),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -115,14 +117,15 @@ pub enum LoadOptions {
     Instanced(Vec<Instance>),
 }
 
+#[derive(Clone)]
 pub struct AssetLoader {
-    render_tx: Sender<RenderEvent>,
+    render_tx: Sender<RenderCommand>,
     #[cfg(target_family = "wasm")]
     worker_pool: WorkerPool,
 }
 
 impl AssetLoader {
-    pub fn new(sender: Sender<RenderEvent>) -> Self {
+    pub fn new(sender: Sender<RenderCommand>) -> Self {
         Self {
             render_tx: sender.clone(),
             #[cfg(target_family = "wasm")]
@@ -130,15 +133,23 @@ impl AssetLoader {
         }
     }
 
-    pub fn load(&self, path: ResourcePath, options: Option<Vec<LoadOptions>>) {
+    pub fn load(&self, path: ResourcePath) {
         match path.extension() {
-            Some("obj") => self.load_model(path, options),
-            Some("las") | Some("laz") => self.load_pointcloud(path, options),
+            Some("obj") => self.load_model(path),
+            Some("las") | Some("laz") => self.load_pointcloud(path),
             _ => (),
         }
     }
+    
+    #[cfg(target_family = "wasm")]
+    pub fn load_from_dialog(&self, file: FileHandle) {        
+        self.worker_pool.submit(UploadTask {
+            kind: AssetKind::Pointcloud,
+            file,
+        });
+    }
 
-    fn load_model(&self, path: ResourcePath, options: Option<Vec<LoadOptions>>) {
+    fn load_model(&self, path: ResourcePath) {
         #[cfg(not(target_family = "wasm"))]
         {
             let sender = self.render_tx.clone();
@@ -148,17 +159,20 @@ impl AssetLoader {
             std::thread::spawn(move || {
                 let model = future::block_on(ModelBuffer::from_obj(&path)).unwrap();
                 sender
-                    .send(RenderEvent::LoadAsset(Asset::Model(model, Some(filename), options)))
+                    .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename))))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
             });
         }
 
         #[cfg(target_family = "wasm")]
-        self.worker_pool.submit_task(Task::LoadModel(path, options));
+        self.worker_pool.submit(LoadTask {
+            kind: AssetKind::Model,
+            path,
+        });
     }
 
-    fn load_pointcloud(&self, path: ResourcePath, options: Option<Vec<LoadOptions>>) {
+    fn load_pointcloud(&self, path: ResourcePath) {
         #[cfg(not(target_family = "wasm"))]
         {
             let sender = self.render_tx.clone();
@@ -166,20 +180,20 @@ impl AssetLoader {
             let filename = path.filename().to_string();
 
             std::thread::spawn(move || {
-                let pointcloud = future::block_on(PointcloudBuffer::from_las(&path)).unwrap();
+                let data = future::block_on(path.load_binary()).unwrap();
+                let pointcloud = PointcloudBuffer::from_las(data).unwrap();
                 sender
-                    .send(RenderEvent::LoadAsset(Asset::Pointcloud(
-                        pointcloud,
-                        Some(filename),
-                        options,
-                    )))
+                    .send(RenderCommand::LoadAsset(Asset::Pointcloud(pointcloud, Some(filename))))
                     .unwrap();
-                log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
+                log::info!("Loaded {} in {} s", path, timestamp.elapsed().as_secs_f32());
             });
         }
 
         #[cfg(target_family = "wasm")]
-        self.worker_pool.submit_task(Task::LoadPointcloud(path, options));
+        self.worker_pool.submit(UploadTask {
+            kind: AssetKind::Pointcloud,
+            file,
+        });
     }
 }
 

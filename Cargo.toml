@@ -26,9 +26,11 @@ instant = "0.1.13"
 las = { version = "0.9.6", features = ["laz"] }
 log = "0.4.28"
 reqwest = "0.12.23"
+rfd = { version = "0.15.4", features = ["file-handle-inner"] }
 serde = "1.0.226"
+thiserror = "2.0.17"
 uuid = { version = "1.18.1", features = ["rng-getrandom", "v4"] }
-wgpu = "26.0.1"
+wgpu = "^25"
 winit = "0.30.12"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -48,7 +50,7 @@ instant = { version = "0.1.13", features = ["wasm-bindgen"] }
 js-sys = "0.3.80"
 serde-wasm-bindgen = "0.6.5"
 tobj = { version = "4.0.3", default-features = false, features = ["async"] }
-wgpu = { version = "26.0.1", features = ["webgpu"]}
+wgpu = { version = "^25", features = ["webgpu"]}
 wasm-bindgen = "0.2.101"
 wasm-bindgen-futures = "0.4.51"
 web-sys = { version = "0.3", features = [
@@ -61,6 +63,7 @@ web-sys = { version = "0.3", features = [
     "WorkerOptions",    
     "DedicatedWorkerGlobalScope",
     "MessageEvent",
+    "ReadableStreamDefaultReader",
 ]}
 
 [package.metadata.wasm-pack.profile.release]

@@ -9,6 +9,8 @@ mod app;
 mod asset;
 mod camera;
 mod context;
+mod dialog;
+mod error;
 mod instance;
 mod light;
 mod model;
@@ -16,14 +18,16 @@ mod pointcloud;
 mod renderer;
 mod scene;
 mod state;
+mod surface;
 mod texture;
+mod ui;
 mod vertex;
 #[cfg(target_family = "wasm")]
 mod worker;
 
 pub fn run() -> anyhow::Result<()> {
     #[cfg(not(target_family = "wasm"))]
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,egui_wgpu=error")).init();
 
     #[cfg(target_family = "wasm")]
     console_log::init_with_level(log::Level::Info).unwrap_throw();
@@ -33,8 +37,8 @@ pub fn run() -> anyhow::Result<()> {
         #[cfg(target_family = "wasm")]
         &event_loop,
     );
-    event_loop.run_app(&mut app)?;
 
+    event_loop.run_app(&mut app)?;
     Ok(())
 }
 

@@ -4,16 +4,10 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use uuid::Uuid;
 use wgpu::util::DeviceExt;
 
-use crate::{
-    asset::ResourcePath,
-    context::RenderContext,
-    instance::{Instance, Instances},
-    renderer::TransformBuffer,
-    texture::Texture,
-    vertex::Vertex,
-};
+use crate::{asset::ResourcePath, context::RenderContext, renderer::TransformBuffer, texture::Texture, vertex::Vertex};
 
 const MAT_SWAP_YZ: [[f32; 4]; 4] = [
     [1.0, 0.0, 0.0, 0.0],
@@ -24,12 +18,7 @@ const MAT_SWAP_YZ: [[f32; 4]; 4] = [
 
 pub trait DrawModel<'a> {
     // fn draw_mesh(&mut self, mesh: &'a Mesh, material: &'a Material);
-    fn draw_mesh_instanced(
-        &mut self,
-        mesh: &'a Mesh,
-        material: &'a Material,
-        instances: Range<u32>,
-    );
+    fn draw_mesh_instanced(&mut self, mesh: &'a Mesh, material: &'a Material, instances: Range<u32>);
     // fn draw_model(&mut self, model: &'a Model);
     fn draw_model_instanced(&mut self, model: &'a Model, instances: Range<u32>);
 }
@@ -42,15 +31,9 @@ where
     //     self.draw_mesh_instanced(mesh, material, 0..1);
     // }
 
-    fn draw_mesh_instanced(
-        &mut self,
-        mesh: &'b Mesh,
-        material: &'b Material,
-        instances: Range<u32>,
-    ) {
+    fn draw_mesh_instanced(&mut self, mesh: &'b Mesh, material: &'b Material, instances: Range<u32>) {
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         self.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-
         self.set_bind_group(0, &material.bind_group, &[]);
 
         self.draw_indexed(0..mesh.num_elements, 0, instances);
@@ -67,11 +50,7 @@ where
     //     self.draw_model_instanced(model, instance_range);
     // }
 
-    fn draw_model_instanced(
-        &mut self,
-        model: &'b Model,
-        instances: Range<u32>,
-    ) {        
+    fn draw_model_instanced(&mut self, model: &'b Model, instances: Range<u32>) {
         for mesh in &model.meshes {
             let material = &model.materials[mesh.material];
             self.draw_mesh_instanced(mesh, material, instances.clone());
@@ -167,21 +146,15 @@ pub struct Material {
     pub bind_group: wgpu::BindGroup,
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct TransformUniform {
-    pub transform: [[f32; 4]; 4],
-}
+// impl TransformUniform {
+//     pub fn new() -> Self {
+//         Self { transform: MAT_SWAP_YZ }
+//     }
 
-impl TransformUniform {
-    pub fn new() -> Self {
-        Self { transform: MAT_SWAP_YZ }
-    }
-
-    pub fn update(&mut self, transform: glam::Mat4) {
-        self.transform = transform.to_cols_array_2d()
-    }
-}
+//     pub fn update(&mut self, transform: glam::Mat4) {
+//         self.transform = transform.to_cols_array_2d()
+//     }
+// }
 
 // pub struct Transform {
 //     pub position: glam::Vec3,
@@ -194,8 +167,8 @@ impl TransformUniform {
 //     pub fn new(buffer: &mut TransformBuffer, context: &RenderContext) -> Self {
 //         let matrix = MAT_SWAP_YZ;
 //         let index = buffer.request_slot();
-        
-//         let offset = index * std::mem::size_of::<TransformUniform>();        
+
+//         let offset = index * std::mem::size_of::<TransformUniform>();
 //         context
 //             .queue
 //             .write_buffer(buffer.buffer(), offset as u64, bytemuck::bytes_of(&matrix));

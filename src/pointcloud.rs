@@ -50,8 +50,8 @@ impl PointcloudBuffer {
         &self.0
     }
 
-    pub async fn from_las(path: &ResourcePath) -> anyhow::Result<Self> {
-        let data = path.load_binary().await?;
+    pub fn from_las(data: Vec<u8>) -> anyhow::Result<Self> {
+        // let data = path.load_binary().await?;
         let cursor = Cursor::new(data);
         let mut reader = las::Reader::new(cursor)?;
 

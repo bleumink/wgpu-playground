@@ -6,8 +6,8 @@ use crate::context::RenderContext;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Instance {
-    position: glam::Vec3,
-    rotation: glam::Quat,
+    pub position: glam::Vec3,
+    pub rotation: glam::Quat,
 }
 
 impl Instance {
@@ -15,9 +15,13 @@ impl Instance {
         Self { position, rotation }
     }
 
+    pub fn to_mat4(&self) -> glam::Mat4 {
+        glam::Mat4::from_rotation_translation(self.rotation, self.position)
+    }
+
     pub fn to_raw(&self) -> RawInstance {
         RawInstance {
-            model: glam::Mat4::from_rotation_translation(self.rotation, self.position).to_cols_array_2d(),
+            model: self.to_mat4().to_cols_array_2d(),
         }
     }
 }

@@ -2,60 +2,24 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
-use crate::texture::Texture;
+use crate::{surface::Surface, texture::Texture};
 
 pub struct RenderContext {
     pub window: Arc<Window>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub surface: wgpu::Surface<'static>,
-    pub is_surface_configured: bool,
     pub config: wgpu::SurfaceConfiguration,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub depth_texture: Texture,
+    pub pending_resize: Option<wgpu::SurfaceConfiguration>,
 }
 
 impl RenderContext {
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
-        let size = window.inner_size();
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            #[cfg(not(target_family = "wasm"))]
-            backends: wgpu::Backends::PRIMARY,
-            #[cfg(target_family = "wasm")]
-            backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(Arc::clone(&window))?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await?;
-
-        log::info!("info: {:?}", adapter.get_info());
-
-        let surface_capabilities = surface.get_capabilities(&adapter);
-        let surface_format = surface_capabilities
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_capabilities.formats[0]);
-        
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            present_mode: surface_capabilities.present_modes[0],
-            alpha_mode: surface_capabilities.alpha_modes[0],
-            view_formats: vec![surface_format.add_srgb_suffix()],
-            desired_maximum_frame_latency: 2,
-        };
-
+    pub async fn new(
+        window: Arc<Window>,
+        adapter: &wgpu::Adapter,
+        config: wgpu::SurfaceConfiguration,
+    ) -> anyhow::Result<Self> {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
@@ -63,7 +27,7 @@ impl RenderContext {
                 required_limits: if cfg!(target_family = "wasm") {
                     wgpu::Limits::downlevel_defaults()
                 } else {
-                    wgpu::Limits::defaults()
+                    wgpu::Limits { ..Default::default() }
                 },
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
@@ -98,21 +62,15 @@ impl RenderContext {
             window,
             device,
             queue,
-            surface,
-            is_surface_configured: false,
             config,
             texture_bind_group_layout,
             depth_texture,
+            pending_resize: None,
         })
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.config.width = width;
-        self.config.height = height;
-
-        self.surface.configure(&self.device, &self.config);
-        self.is_surface_configured = true;
-
+    pub fn resize(&mut self, config: wgpu::SurfaceConfiguration) {
+        self.config = config;
         self.depth_texture = Texture::create_depth_texture(Some("Depth texture"), &self.device, &self.config);
     }
 }
