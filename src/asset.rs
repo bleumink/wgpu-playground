@@ -10,11 +10,9 @@ use instant::Instant;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_family = "wasm")]
-use crate::worker::{LoadTask, UploadTask, WorkerPool, AssetKind};
+use crate::worker::{AssetKind, LoadTask, UploadTask, WorkerPool};
 
-use crate::{
-    instance::Instance, model::ModelBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand,
-};
+use crate::{instance::Instance, model::ModelBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ResourcePath {
@@ -140,9 +138,9 @@ impl AssetLoader {
             _ => (),
         }
     }
-    
+
     #[cfg(target_family = "wasm")]
-    pub fn load_from_dialog(&self, file: FileHandle) {        
+    pub fn load_from_dialog(&self, file: web_sys::File) {
         self.worker_pool.submit(UploadTask {
             kind: AssetKind::Pointcloud,
             file,
@@ -189,11 +187,11 @@ impl AssetLoader {
             });
         }
 
-        #[cfg(target_family = "wasm")]
-        self.worker_pool.submit(UploadTask {
-            kind: AssetKind::Pointcloud,
-            file,
-        });
+        // #[cfg(target_family = "wasm")]
+        // self.worker_pool.submit(UploadTask {
+        //     kind: AssetKind::Pointcloud,
+        //     file,
+        // });
     }
 }
 

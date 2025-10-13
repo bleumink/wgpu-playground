@@ -72,11 +72,11 @@ impl ApplicationHandler<State> for App {
             use futures_lite::future;
             use winit::dpi::LogicalSize;
 
-            let monitor = window.current_monitor().unwrap();
-            let size = monitor.size();
-            let scale = 0.50;
-            let target_size = LogicalSize::new(size.width as f64 * scale, size.height as f64 * scale);
-            let _ = window.request_inner_size(target_size);
+            // let monitor = window.current_monitor().unwrap();
+            // let size = monitor.size();
+            // let scale = 0.50;
+            // let target_size = LogicalSize::new(size.width as f64 * scale, size.height as f64 * scale);
+            // let _ = window.request_inner_size(target_size);
 
             let (surface, context) = future::block_on(Surface::initialize(Arc::clone(&window))).unwrap();
             let mut renderer = future::block_on(Renderer::new(context, render_rx, result_tx)).unwrap();

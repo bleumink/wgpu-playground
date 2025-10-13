@@ -25,7 +25,7 @@ pub fn open_file_dialog(loader: AssetLoader) {
 
     wasm_bindgen_futures::spawn_local(async move {
         if let Some(handle) = create_dialog_future().await {
-            loader.load_from_dialog(handle);
+            loader.load_from_dialog(handle.inner().clone());
             // log::info!("{:?}", handle);
         }
     });

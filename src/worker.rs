@@ -48,7 +48,7 @@ impl WorkerRuntime {
         }
     }
 
-    pub fn register<T: WorkerTask>(&mut self) {
+    pub fn register<T: WorkerTask>(&mut self) -> &Self {
         let func = Rc::new(move |payload: JsValue, scope: DedicatedWorkerGlobalScope| {
             wasm_bindgen_futures::spawn_local(async move {
                 let task = T::from_message(payload);
@@ -57,6 +57,7 @@ impl WorkerRuntime {
         });
 
         self.handlers.insert(T::HANDLE, func);
+        self
     }
 
     pub fn run(self) {
@@ -383,7 +384,7 @@ impl WorkerPool {
             pool.assign_task(worker_id, task.boxed());
             return;
         }
-        
+
         pool.queue.push_back(task.boxed());
 
         if pool.workers.len() < pool.capacity {
