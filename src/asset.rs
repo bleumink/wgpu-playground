@@ -133,7 +133,7 @@ impl AssetLoader {
 
     pub fn load(&self, path: ResourcePath) {
         match path.extension() {
-            Some("obj") => self.load_model(path),
+            Some("obj") | Some("gltf") | Some("glb") => self.load_model(path),
             Some("las") | Some("laz") => self.load_pointcloud(path),
             _ => (),
         }
@@ -155,7 +155,7 @@ impl AssetLoader {
             let filename = path.filename().to_string();
 
             std::thread::spawn(move || {
-                let model = future::block_on(ModelBuffer::from_obj(&path)).unwrap();
+                let model = future::block_on(ModelBuffer::from_gltf(&path)).unwrap();
                 sender
                     .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename))))
                     .unwrap();

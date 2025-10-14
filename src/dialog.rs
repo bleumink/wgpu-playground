@@ -4,7 +4,7 @@ use crate::asset::ResourcePath;
 fn create_dialog_future() -> impl Future<Output = Option<rfd::FileHandle>> {
     rfd::AsyncFileDialog::new()
         .add_filter("Pointcloud", &["las", "laz"])
-        .add_filter("Model", &["obj"])
+        .add_filter("Model", &["obj", "gltf", "glb"])
         .pick_file()
 }
 

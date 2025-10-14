@@ -1,4 +1,29 @@
-use image::GenericImageView;
+use bytemuck::{Pod, Zeroable};
+use gltf::image::Format as GltfImageFormat;
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
+
+use crate::model::{MaterialHeader, MaterialView};
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct TextureFormat(pub usize);
+
+impl TextureFormat {
+    pub const RGBA8: Self = Self(0);
+    pub const RGB8: Self = Self(1);
+    pub const RG8: Self = Self(2);
+    pub const R8: Self = Self(3);
+
+    pub fn from_gltf(format: GltfImageFormat) -> TextureFormat {
+        match format {
+            GltfImageFormat::R8G8B8A8 => TextureFormat::RGBA8,
+            GltfImageFormat::R8G8B8 => TextureFormat::RGB8,
+            GltfImageFormat::R8G8 => TextureFormat::RG8,
+            GltfImageFormat::R8 => TextureFormat::R8,
+            _ => TextureFormat::RGBA8,
+        }
+    }
+}
 
 pub struct Texture {
     #[allow(unused)]
@@ -10,14 +35,29 @@ pub struct Texture {
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+    pub fn from_view(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: MaterialView,
+        label: Option<&str>, 
+    ) -> anyhow::Result<Self> {
+        let image_buffer = ImageBuffer::from_raw(view.width, view.height, view.texture.to_vec()).unwrap();
+        let img = DynamicImage::ImageRgb8(image_buffer);
+        Ok(Self::from_image(device, queue, &img, label))       
+    }
+    
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        header: MaterialHeader,
         bytes: &[u8],
         label: Option<&str>,
     ) -> anyhow::Result<Self> {
         let img = image::load_from_memory(bytes)?;
-        Self::from_image(device, queue, &img, label)
+        Ok(Self::from_image(device, queue, &img, label))
+        // let image_buffer = image::ImageBuffer::from_raw(width, height, buf)
+        // let img = image::DynamicImage::new_rgb8(w, h)
+        // Ok(Self::from_image(device, queue, &img, label))
     }
 
     pub fn from_image(
@@ -25,7 +65,7 @@ impl Texture {
         queue: &wgpu::Queue,
         img: &image::DynamicImage,
         label: Option<&str>,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
         let size = wgpu::Extent3d {
@@ -63,16 +103,25 @@ impl Texture {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        // let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        //     address_mode_u: wgpu::AddressMode::ClampToEdge,
+        //     address_mode_v: wgpu::AddressMode::ClampToEdge,
+        //     address_mode_w: wgpu::AddressMode::ClampToEdge,
+        //     mag_filter: wgpu::FilterMode::Linear,
+        //     min_filter: wgpu::FilterMode::Nearest,
+        //     mipmap_filter: wgpu::FilterMode::Nearest,
+        //     ..Default::default()
+        // });
 
-        Ok(Self { texture, view, sampler })
+        Self { texture, view, sampler }
     }
 
     pub fn create_depth_texture(

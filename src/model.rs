@@ -4,15 +4,16 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use gltf::{image::Format as GltfImageFormat, mesh::util::ReadTexCoords, Gltf};
 use uuid::Uuid;
 use wgpu::util::DeviceExt;
 
-use crate::{asset::ResourcePath, context::RenderContext, renderer::TransformBuffer, texture::Texture, vertex::Vertex};
+use crate::{asset::ResourcePath, context::RenderContext, renderer::TransformBuffer, texture::{Texture, TextureFormat}, vertex::Vertex};
 
 const MAT_SWAP_YZ: [[f32; 4]; 4] = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0, 0.0],
     [0.0, 0.0, 0.0, 1.0],
 ];
 
@@ -104,7 +105,10 @@ pub struct MeshView<'a> {
 }
 
 pub struct MaterialView<'a> {
-    pub diffuse_texture: &'a [u8],
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+    pub texture: &'a [u8],
 }
 
 #[repr(C)]
@@ -130,8 +134,11 @@ pub struct MeshHeader {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MaterialHeader {
-    pub texture_offset: usize,
-    pub texture_size: usize,
+    pub offset: usize,
+    pub size: usize,
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub struct Mesh {
@@ -191,10 +198,10 @@ impl Model {
         let materials = buffer
             .iter_materials()
             .map(|material| {
-                let diffuse_texture = Texture::from_bytes(
+                let diffuse_texture = Texture::from_view(
                     &context.device,
                     &context.queue,
-                    material.diffuse_texture,
+                    material,
                     label.as_deref(),
                 )
                 .unwrap();
@@ -282,7 +289,7 @@ impl ModelBuffer {
             texture_offset,
         };
 
-        let capacity = texture_offset + std::mem::size_of::<u8>() * textures.len();
+        let capacity = texture_offset + textures.len();
         let mut buffer = Vec::new();
 
         buffer.reserve_exact(capacity);
@@ -336,11 +343,82 @@ impl ModelBuffer {
             .chunks_exact(std::mem::size_of::<MaterialHeader>())
             .map(|chunk| {
                 let header = bytemuck::from_bytes::<MaterialHeader>(chunk);
-                let texture_end = header.texture_offset + header.texture_size;
-                let diffuse_texture = &raw_textures[header.texture_offset..texture_end];
+                let texture_end = header.offset + header.size;
+                let texture = &raw_textures[header.offset..texture_end];
 
-                MaterialView { diffuse_texture }
+                MaterialView { 
+                    format: header.format,
+                    width: header.width,
+                    height: header.height,
+                    texture,
+                 }
             })
+    }
+
+    pub async fn from_gltf(path: &ResourcePath) -> anyhow::Result<Self> {
+        let data = path.load_binary().await?;        
+        let (gltf, buffers, images) = gltf::import_slice(data)?;
+        
+        let mut material_headers = Vec::new();
+        let mut textures = Vec::new();
+        for image in images {
+            let header = MaterialHeader {
+                offset: textures.len(),
+                size: image.pixels.len(),
+                width: image.width,
+                height: image.height,
+                format: TextureFormat::from_gltf(image.format),
+            };
+            
+            material_headers.push(header);
+            textures.extend(image.pixels);
+        }
+
+        let scene = match gltf.default_scene() {
+            Some(scene) => scene,
+            None => gltf.scenes().next().unwrap()
+        };
+
+        let (mesh_headers, vertices, indices) = scene.nodes().fold((Vec::new(), Vec::new(), Vec::new()), |accumulator, node| {
+            let (mut mesh_headers, mut vertices, mut indices) = accumulator;
+            if let Some(mesh) = node.mesh() {
+                for primitive in mesh.primitives() {
+                    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+
+                    let mesh_indices = reader.read_indices().unwrap().into_u32().collect::<Vec<_>>();
+                    let positions = reader.read_positions().unwrap();
+                    let normals = reader.read_normals().unwrap();
+                    let tex_coords = reader.read_tex_coords(0)
+                        .map(|t| t.into_f32().map(|[u, v]| [u, 1.0 - v])).unwrap();
+                    let mesh_vertices = positions
+                        .zip(normals)
+                        .zip(tex_coords)
+                        .map(|((position, normal), tex_coords)| ModelVertex {
+                            position, tex_coords, normal,
+                        })
+                        .collect::<Vec<_>>();
+                    
+                    // log::info!("{:?}", gltf.textures());
+                    // log::info!("{:?}", gltf.samplers());
+
+                    let header = MeshHeader {
+                        vertex_offset: std::mem::size_of::<ModelVertex>() * vertices.len(),
+                        vertex_count: mesh_vertices.len(),
+                        index_offset: std::mem::size_of::<u32>() * indices.len(),
+                        index_count: mesh_indices.len(),
+                        material_index: primitive.material().index().unwrap_or(0),
+                    };
+
+                    mesh_headers.push(header);
+                    vertices.extend(mesh_vertices);
+                    indices.extend(mesh_indices);
+                }
+            }
+
+            (mesh_headers, vertices, indices)
+        });
+
+        Ok(Self::new(mesh_headers, material_headers, vertices, indices, textures))
     }
 
     pub async fn from_obj(path: &ResourcePath) -> anyhow::Result<Self> {
@@ -370,8 +448,11 @@ impl ModelBuffer {
                 let texture_path = path.create_relative(&filename);
                 let texture = texture_path.load_binary().await?;
                 let header = MaterialHeader {
-                    texture_offset: textures.len(),
-                    texture_size: texture.len(),
+                    offset: textures.len(),
+                    size: texture.len(),
+                    width: 0,
+                    height: 0,
+                    format: TextureFormat::RGBA8,
                 };
 
                 material_headers.push(header);

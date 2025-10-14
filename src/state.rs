@@ -20,7 +20,7 @@ use crate::{
 pub type EntityId = Uuid;
 
 const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
-    1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ]);
 
 #[derive(Debug)]
@@ -91,7 +91,7 @@ impl State {
         let ui = Ui::new(Arc::clone(&window), loader.clone());
         let entities = HashMap::new();
 
-        loader.load(ResourcePath::new("cube.obj"));
+        // loader.load(ResourcePath::new("cube.obj"));
         // loader.load(ResourcePath::new("1612_9070.laz"));
 
         Ok(Self {
