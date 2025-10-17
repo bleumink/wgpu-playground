@@ -4,14 +4,14 @@ use uuid::Uuid;
 
 use crate::{
     context::RenderContext,
-    model::{DrawModel, Model},
+    mesh::{DrawMesh, Mesh},
     pointcloud::{DrawPointcloud, Pointcloud},
     renderer::{RenderId, TransformBuffer},
     state::EntityId,
 };
 
 pub enum RenderKind {
-    Model(Model),
+    Model(Mesh),
     Pointcloud(Pointcloud),
 }
 
@@ -131,7 +131,7 @@ impl Scene {
     //     self.renderables.remove(id);
     // }
 
-    pub fn iter_models(&self) -> impl Iterator<Item = (&Model, &RenderGroup)> {
+    pub fn iter_models(&self) -> impl Iterator<Item = (&Mesh, &RenderGroup)> {
         self.groups.iter().filter_map(|(_, bucket)| {
             if let RenderKind::Model(model) = &bucket.kind {
                 Some((model, bucket))
@@ -162,10 +162,10 @@ where
 {
     fn draw_scene(&mut self, scene: &'b Scene, camera_bind_group: &'b wgpu::BindGroup) {
         self.set_bind_group(1, camera_bind_group, &[]);
-        for (model, bucket) in scene.iter_models() {
+        for (mesh, bucket) in scene.iter_models() {
             self.set_pipeline(&bucket.pipeline);
             self.set_bind_group(2, &bucket.bind_group, &[]);
-            self.draw_model_instanced(model, 0..bucket.instances.len() as u32);
+            self.draw_mesh_instanced(mesh, 0..bucket.instances.len() as u32);
         }
 
         self.set_bind_group(0, camera_bind_group, &[]);

@@ -15,7 +15,7 @@ use wasm_bindgen::prelude::*;
 use crate::{
     asset::Asset,
     context::RenderContext,
-    model::{Model, ModelVertex},
+    mesh::{Mesh, MeshVertex, TextureCoordinate},
     pointcloud::{PointVertex, Pointcloud},
     scene::{DrawScene, RenderKind, Scene},
     state::EntityId,
@@ -320,7 +320,7 @@ impl Renderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[ModelVertex::desc()],
+                buffers: &[MeshVertex::desc(), TextureCoordinate::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -426,7 +426,7 @@ impl Renderer {
     fn load_asset(&mut self, asset: Asset) -> anyhow::Result<()> {
         match asset {
             Asset::Model(buffer, label) => {
-                let model = Model::from_buffer(buffer, &self.context, label.clone());
+                let model = Mesh::from_buffer(buffer, &self.context, label.clone());
                 let render_id = self.scene.add_group(
                     RenderKind::Model(model),
                     self.render_pipeline.clone(),

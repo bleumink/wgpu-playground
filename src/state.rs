@@ -91,7 +91,7 @@ impl State {
         let ui = Ui::new(Arc::clone(&window), loader.clone());
         let entities = HashMap::new();
 
-        // loader.load(ResourcePath::new("cube.obj"));
+        loader.load(ResourcePath::new("cube.obj"));
         // loader.load(ResourcePath::new("1612_9070.laz"));
 
         Ok(Self {

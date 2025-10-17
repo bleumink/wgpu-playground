@@ -1,11 +1,9 @@
 use bytemuck::{Pod, Zeroable};
-use gltf::image::Format as GltfImageFormat;
-use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
-
-use crate::model::{MaterialHeader, MaterialView};
+use gltf::{image::Format as GltfImageFormat, texture::{MagFilter, MinFilter, WrappingMode}};
+use image::GenericImageView;
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+#[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
 pub struct TextureFormat(pub usize);
 
 impl TextureFormat {
@@ -14,14 +12,148 @@ impl TextureFormat {
     pub const RG8: Self = Self(2);
     pub const R8: Self = Self(3);
 
-    pub fn from_gltf(format: GltfImageFormat) -> TextureFormat {
+    fn make_image<F, P>(width: u32, height: u32, data: &[u8], func: F) -> Option<image::DynamicImage>
+    where
+        F: FnOnce(image::ImageBuffer<P, Vec<u8>>) -> image::DynamicImage,
+        P: image::Pixel<Subpixel = u8>,
+    {
+        image::ImageBuffer::from_raw(width, height, data.to_vec()).map(func)
+    }
+
+    pub fn from_gltf(format: &GltfImageFormat) -> Self {
         match format {
-            GltfImageFormat::R8G8B8A8 => TextureFormat::RGBA8,
-            GltfImageFormat::R8G8B8 => TextureFormat::RGB8,
-            GltfImageFormat::R8G8 => TextureFormat::RG8,
-            GltfImageFormat::R8 => TextureFormat::R8,
-            _ => TextureFormat::RGBA8,
+            GltfImageFormat::R8G8B8A8 => Self::RGBA8,
+            GltfImageFormat::R8G8B8 => Self::RGB8,
+            GltfImageFormat::R8G8 => Self::RG8,
+            GltfImageFormat::R8 => Self::R8,
+            _ => panic!("Unsupported texture format"),
         }
+    }
+
+    pub fn to_image(self, width: u32, height: u32, data: &[u8]) -> Option<image::DynamicImage> {
+        match self {            
+            Self::RGBA8 => Self::make_image(width, height, data, image::DynamicImage::ImageRgba8),
+            Self::RGB8 => Self::make_image(width, height, data, image::DynamicImage::ImageRgb8),
+            Self::RG8 => Self::make_image(width, height, data, image::DynamicImage::ImageLumaA8),
+            Self::R8 => Self::make_image(width, height, data, image::DynamicImage::ImageLuma8),            
+            _ => panic!("Unsupported texture format"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TextureView<'a> {
+    pub texture: &'a [u8],    
+    pub sampler: Sampler,
+    pub uv_index: u32,
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl TextureView<'_> {
+    pub fn to_image(&self) -> Option<image::DynamicImage> {
+        self.format.to_image(self.width, self.height, self.texture)
+    }    
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct Sampler {
+    pub mag_filter: u8,
+    pub min_filter: u8,
+    pub mipmap_filter: u8,
+    pub address_mode_u: u8,
+    pub address_mode_v: u8,
+}   
+
+impl Default for Sampler {
+    fn default() -> Self {
+        Self {
+            mag_filter: 1,
+            min_filter: 1,
+            mipmap_filter: 1,
+            address_mode_u: 2,
+            address_mode_v: 2,
+        }
+    }
+}
+
+impl Sampler {
+    fn to_filter_mode(value: u8) -> wgpu::FilterMode {
+        match value {
+            0 => wgpu::FilterMode::Nearest,
+            1 => wgpu::FilterMode::Linear,
+            _ => panic!("Invalid filter mode"),
+        }
+    }
+
+    fn to_address_mode(value: u8) -> wgpu::AddressMode {
+        match value {
+            0 => wgpu::AddressMode::ClampToEdge,
+            1 => wgpu::AddressMode::MirrorRepeat,
+            2 => wgpu::AddressMode::Repeat,
+            _ => panic!("Invalid address mode"),
+        }
+    }
+
+    fn get_filters(&self) -> (wgpu::FilterMode, wgpu::FilterMode, wgpu::FilterMode) {
+        (
+            Self::to_filter_mode(self.mag_filter),
+            Self::to_filter_mode(self.min_filter),
+            Self::to_filter_mode(self.mipmap_filter),
+        )
+    }
+
+    pub fn from_gltf(sampler: &gltf::texture::Sampler) -> Self {
+        let (min_filter, mipmap_filter) = match sampler.min_filter() {
+            Some(MinFilter::Nearest) => (0, 0),
+            Some(MinFilter::Linear) => (1, 0),
+            Some(MinFilter::NearestMipmapNearest) => (0, 0),
+            Some(MinFilter::LinearMipmapNearest) => (1, 0),
+            Some(MinFilter::NearestMipmapLinear) => (0, 1),
+            Some(MinFilter::LinearMipmapLinear) => (1, 1),
+            None => (1, 1),
+        };            
+
+        let mag_filter = match sampler.mag_filter().unwrap_or(MagFilter::Linear) {
+            MagFilter::Nearest => 0,
+            MagFilter::Linear => 1,
+        };
+
+        let address_mode_u = match sampler.wrap_s() {
+            WrappingMode::ClampToEdge => 0,
+            WrappingMode::MirroredRepeat => 1,
+            WrappingMode::Repeat => 2,
+        };
+
+        let address_mode_v = match sampler.wrap_s() {
+            WrappingMode::ClampToEdge => 0,
+            WrappingMode::MirroredRepeat => 1,
+            WrappingMode::Repeat => 2,
+        };
+
+        Sampler {
+            mag_filter,
+            min_filter,
+            mipmap_filter,
+            address_mode_u,
+            address_mode_v,
+        }        
+    }
+
+    pub fn desc(&self) -> wgpu::SamplerDescriptor {
+        let (mag_filter, min_filter, mipmap_filter) = self.get_filters();
+
+        wgpu::SamplerDescriptor {
+            address_mode_u: Self::to_address_mode(self.address_mode_u),
+            address_mode_v: Self::to_address_mode(self.address_mode_v),
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter,
+            min_filter,
+            mipmap_filter,
+            ..Default::default()
+        }        
     }
 }
 
@@ -38,26 +170,21 @@ impl Texture {
     pub fn from_view(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        view: MaterialView,
-        label: Option<&str>, 
+        view: TextureView,
+        label: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let image_buffer = ImageBuffer::from_raw(view.width, view.height, view.texture.to_vec()).unwrap();
-        let img = DynamicImage::ImageRgb8(image_buffer);
-        Ok(Self::from_image(device, queue, &img, label))       
+        let img = view.to_image().unwrap();
+        Ok(Self::from_image(device, queue, &img, label))
     }
-    
+
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        header: MaterialHeader,
         bytes: &[u8],
         label: Option<&str>,
     ) -> anyhow::Result<Self> {
         let img = image::load_from_memory(bytes)?;
         Ok(Self::from_image(device, queue, &img, label))
-        // let image_buffer = image::ImageBuffer::from_raw(width, height, buf)
-        // let img = image::DynamicImage::new_rgb8(w, h)
-        // Ok(Self::from_image(device, queue, &img, label))
     }
 
     pub fn from_image(
@@ -102,24 +229,24 @@ impl Texture {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         // let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        //     address_mode_u: wgpu::AddressMode::ClampToEdge,
-        //     address_mode_v: wgpu::AddressMode::ClampToEdge,
-        //     address_mode_w: wgpu::AddressMode::ClampToEdge,
+        //     address_mode_u: wgpu::AddressMode::Repeat,
+        //     address_mode_v: wgpu::AddressMode::Repeat,
+        //     address_mode_w: wgpu::AddressMode::Repeat,
         //     mag_filter: wgpu::FilterMode::Linear,
-        //     min_filter: wgpu::FilterMode::Nearest,
-        //     mipmap_filter: wgpu::FilterMode::Nearest,
+        //     min_filter: wgpu::FilterMode::Linear,
+        //     mipmap_filter: wgpu::FilterMode::Linear,
         //     ..Default::default()
         // });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         Self { texture, view, sampler }
     }

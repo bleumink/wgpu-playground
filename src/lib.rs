@@ -7,13 +7,15 @@ use crate::app::App;
 
 mod app;
 mod asset;
+mod binary;
 mod camera;
 mod context;
 mod dialog;
 mod error;
 mod instance;
 mod light;
-mod model;
+mod material;
+mod mesh;
 mod pointcloud;
 mod renderer;
 mod scene;

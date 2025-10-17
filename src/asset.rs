@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_family = "wasm")]
 use crate::worker::{AssetKind, LoadTask, UploadTask, WorkerPool};
 
-use crate::{instance::Instance, model::ModelBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
+use crate::{instance::Instance, mesh::MeshBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ResourcePath {
@@ -106,7 +106,7 @@ impl std::fmt::Display for ResourcePath {
 
 pub enum Asset {
     Pointcloud(PointcloudBuffer, Option<String>),
-    Model(ModelBuffer, Option<String>),
+    Model(MeshBuffer, Option<String>),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -133,7 +133,8 @@ impl AssetLoader {
 
     pub fn load(&self, path: ResourcePath) {
         match path.extension() {
-            Some("obj") | Some("gltf") | Some("glb") => self.load_model(path),
+            Some("obj") => self.load_obj(path),
+            Some("gltf") | Some("glb") => self.load_gltf(path),
             Some("las") | Some("laz") => self.load_pointcloud(path),
             _ => (),
         }
@@ -147,7 +148,7 @@ impl AssetLoader {
         });
     }
 
-    fn load_model(&self, path: ResourcePath) {
+    fn load_obj(&self, path: ResourcePath) {
         #[cfg(not(target_family = "wasm"))]
         {
             let sender = self.render_tx.clone();
@@ -155,7 +156,30 @@ impl AssetLoader {
             let filename = path.filename().to_string();
 
             std::thread::spawn(move || {
-                let model = future::block_on(ModelBuffer::from_gltf(&path)).unwrap();
+                let model = future::block_on(MeshBuffer::from_obj(&path)).unwrap();
+                sender
+                    .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename))))
+                    .unwrap();
+                log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
+            });
+        }
+
+        #[cfg(target_family = "wasm")]
+        self.worker_pool.submit(LoadTask {
+            kind: AssetKind::Model,
+            path,
+        });
+    }
+
+    fn load_gltf(&self, path: ResourcePath) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let sender = self.render_tx.clone();
+            let timestamp = Instant::now();
+            let filename = path.filename().to_string();
+
+            std::thread::spawn(move || {
+                let model = future::block_on(MeshBuffer::from_gltf(&path)).unwrap();
                 sender
                     .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename))))
                     .unwrap();

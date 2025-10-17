@@ -1,7 +1,8 @@
 // Vertex shader
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) tex_coords: vec2<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) tex_coords: vec2<f32>,
 }
 
 struct VertexOutput {
@@ -29,15 +30,15 @@ var<storage, read> instance_indices: array<u32>;
 
 @vertex
 fn vs_main(
-    model: VertexInput,
+    mesh: VertexInput,
     @builtin(instance_index) instance_id: u32,
 ) -> VertexOutput {
     let global_index = instance_indices[instance_id];
     let transform = transforms[global_index].matrix;
 
     var out: VertexOutput;
-    out.tex_coords = model.tex_coords;
-    out.clip_position = camera.view_projection * transform * vec4<f32>(model.position, 1.0);
+    out.tex_coords = mesh.tex_coords;
+    out.clip_position = camera.view_projection * transform * vec4<f32>(mesh.position, 1.0);
     return out;
 }
 
