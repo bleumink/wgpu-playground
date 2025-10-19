@@ -22,7 +22,7 @@ use crate::{
     surface::Surface,
     texture::Texture,
     ui::UiData,
-    vertex::Vertex,
+    vertex::{Vertex, VertexLayoutBuilder},
 };
 
 // pub const MAT_SWAP_YZ: [[f32; 4]; 4] = [
@@ -313,6 +313,11 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
+        let mesh_vertex_layout = (0..RenderContext::MAX_UV_SETS).fold(
+            VertexLayoutBuilder::new().push::<MeshVertex>(),
+            |builder, _| builder.push::<TextureCoordinate>(),
+        ).build();
+
         let render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -320,7 +325,7 @@ impl Renderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[MeshVertex::desc(), TextureCoordinate::desc()],
+                buffers: &mesh_vertex_layout,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -363,6 +368,10 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
+        let pointcloud_vertex_layout = VertexLayoutBuilder::new()
+            .push::<PointVertex>()
+            .build();
+
         let pointcloud_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Pointcloud pipeline"),
             layout: Some(&pointcloud_pipeline_layout),
@@ -370,7 +379,7 @@ impl Renderer {
                 module: &pointcloud_shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[PointVertex::desc()],
+                buffers: &pointcloud_vertex_layout,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &pointcloud_shader,

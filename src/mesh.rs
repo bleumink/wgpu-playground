@@ -4,11 +4,12 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use gltf::json::extensions::texture;
 use image::EncodableLayout;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    asset::ResourcePath, binary::BlobBuilder, context::RenderContext, material::{Material, MaterialHandle, MaterialView, TextureSlot}, texture::{Sampler, Texture, TextureFormat, TextureView}, vertex::Vertex
+    asset::ResourcePath, binary::BlobBuilder, context::RenderContext, material::{Material, MaterialInstance, MaterialUniform, MaterialView, TextureSlot}, texture::{Sampler, Texture, TextureFormat, TextureView}, vertex::Vertex
 };
 
 const MAT_SWAP_YZ: [[f32; 4]; 4] = [
@@ -20,7 +21,7 @@ const MAT_SWAP_YZ: [[f32; 4]; 4] = [
 
 pub trait DrawMesh<'a> {
     // fn draw_mesh(&mut self, mesh: &'a Mesh, material: &'a Material);
-    fn draw_primitive_instanced(&mut self, primitive: &'a PrimitiveHandle, material: &'a MaterialHandle, instances: Range<u32>);
+    fn draw_primitive_instanced(&mut self, primitive: &'a Primitive, material: &'a MaterialInstance, instances: Range<u32>);
     // fn draw_model(&mut self, model: &'a Model);
     fn draw_mesh_instanced(&mut self, mesh: &'a Mesh, instances: Range<u32>);
 }
@@ -33,13 +34,16 @@ where
     //     self.draw_mesh_instanced(mesh, material, 0..1);
     // }
 
-    fn draw_primitive_instanced(&mut self, primitive: &'b PrimitiveHandle, material: &'b MaterialHandle, instances: Range<u32>) {
+    fn draw_primitive_instanced(&mut self, primitive: &'b Primitive, material: &'b MaterialInstance, instances: Range<u32>) {
         self.set_vertex_buffer(0, primitive.vertex_buffer.slice(..));
-        self.set_vertex_buffer(1, primitive.uv_buffers[0].slice(..));
-
         self.set_index_buffer(primitive.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        self.set_bind_group(0, &material.bind_group, &[]);
 
+        primitive.uv_buffers
+            .iter()
+            .enumerate()
+            .for_each(|(index, uv_set)| self.set_vertex_buffer(1 + index as u32, uv_set.slice(..)));        
+        
+        self.set_bind_group(0, &material.bind_group, &[]);
         self.draw_indexed(0..primitive.num_elements, 0, instances);
     }
 
@@ -56,7 +60,7 @@ where
 
     fn draw_mesh_instanced(&mut self, mesh: &'b Mesh, instances: Range<u32>) {
         for primitive in &mesh.primitives {
-            let material = &mesh.materials[primitive.material];
+            let material = &mesh.materials[primitive.material_index];
             self.draw_primitive_instanced(primitive, material, instances.clone());
         }
     }
@@ -95,18 +99,24 @@ impl Vertex for MeshVertex {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct TextureCoordinate([f32; 2]);
 impl Vertex for TextureCoordinate {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {        
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: 2,
+                    shader_location: 0,
                     format: wgpu::VertexFormat::Float32x2,
                 }
-            ]
+            ],
         }
+    }
+}
+
+impl Default for TextureCoordinate {
+    fn default() -> Self {
+        Self([0.0, 0.0])
     }
 }
 
@@ -118,22 +128,19 @@ impl Vertex for TextureCoordinate {
 pub struct PrimitiveView<'a> {
     pub vertices: &'a [MeshVertex],
     pub indices: &'a [u32],    
-    pub material: usize,
+    pub material_index: usize,
     uv_headers: &'a [TexCoordHeader],
     raw_uv_sets: &'a [u8],
 }
 
 impl<'a> PrimitiveView<'a> {
-    // pub fn get_uv_set(&self, index: usize) -> Option<&'a [TextureCoordinate]> {        
-    //     if let Some(header) = self.uv_headers.get(index) {
-    //         let uv_set_end = header.offset + header.count * std::mem::size_of::<TextureCoordinate>();
-    //         let slice = &self.raw_uv_sets[header.offset..uv_set_end];
-
-    //         Some(bytemuck::cast_slice(slice))
-    //     } else {
-    //         None
-    //     }
-    // }
+    pub fn get_uv_set(&self, index: usize) -> Option<&'a [TextureCoordinate]> {                
+        self.uv_headers.get(index).and_then(|header| {
+            let uv_set_end = header.offset + header.count * std::mem::size_of::<TextureCoordinate>();
+            let slice = &self.raw_uv_sets[header.offset..uv_set_end];
+            Some(bytemuck::cast_slice(slice))
+        }) 
+    }
 
     pub fn iter_uv_sets(&self) -> impl Iterator<Item = &'a [TextureCoordinate]> {
         self.uv_headers.iter().map(|header| {
@@ -195,12 +202,48 @@ pub struct TextureHeader {
     pub height: u32,
 }
 
-pub struct PrimitiveHandle {
+pub struct Primitive {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub uv_buffers: Vec<wgpu::Buffer>,
     pub num_elements: u32,
-    pub material: usize,
+    pub material_index: usize,
+}
+
+impl Primitive {
+    pub fn new(view: PrimitiveView, label: Option<&str>, context: &RenderContext) -> Self {
+        let vertex_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: label.as_deref(),
+            contents: bytemuck::cast_slice(view.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: label.as_deref(),
+            contents: bytemuck::cast_slice(view.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let dummy_uv_set = [TextureCoordinate::default()];
+        let uv_buffers = (0..6)
+            .map(|uv_index| {
+                let uv_set = view.get_uv_set(uv_index).unwrap_or(&dummy_uv_set);
+                context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: label.as_deref(),
+                    contents: bytemuck::cast_slice(&uv_set),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }) 
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            vertex_buffer,
+            index_buffer,
+            uv_buffers,
+            num_elements: view.indices.len() as u32,
+            material_index: view.material_index,
+        }
+    }
 }
 
 // impl TransformUniform {
@@ -239,77 +282,22 @@ pub struct PrimitiveHandle {
 
 pub struct Mesh {
     pub label: Option<String>,
-    pub primitives: Vec<PrimitiveHandle>,
-    pub materials: Vec<MaterialHandle>,
+    pub primitives: Vec<Primitive>,
+    pub materials: Vec<MaterialInstance>,
 }
 
 impl Mesh {
     pub fn from_buffer(buffer: MeshBuffer, context: &RenderContext, label: Option<String>) -> Self {        
         let materials = buffer
             .iter_materials()
-            .map(|material| {
-                let view = material.base_color.unwrap();                
-                
-                let diffuse_texture =
-                    Texture::from_view(&context.device, &context.queue, view, label.as_deref()).unwrap();
-                let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: label.as_deref(),
-                    layout: &context.texture_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                        },
-                    ],
-                });
-
-                MaterialHandle {
-                    diffuse_texture,
-                    bind_group,
-                }
-            })
+            .map(|material| MaterialInstance::new(material, label.as_deref(), context))
             .collect::<Vec<_>>();
 
         let primitives = buffer
             .iter_meshes()
-            .map(|primitive| {
-                let vertex_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: label.as_deref(),
-                    contents: bytemuck::cast_slice(primitive.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let index_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: label.as_deref(),
-                    contents: bytemuck::cast_slice(primitive.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-
-                let uv_buffers = primitive.iter_uv_sets()
-                    .map(|uv_set| {
-                        context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: label.as_deref(),
-                            contents: bytemuck::cast_slice(uv_set),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                PrimitiveHandle {
-                    vertex_buffer,
-                    index_buffer,
-                    uv_buffers,
-                    num_elements: primitive.indices.len() as u32,
-                    material: primitive.material,
-                }
-            })
+            .map(|primitive| Primitive::new(primitive, label.as_deref(), context))
             .collect::<Vec<_>>();
-                
-        
+                        
         Self {
             primitives,
             materials,
@@ -417,7 +405,7 @@ impl MeshBuffer {
                 PrimitiveView {
                     vertices,
                     indices,
-                    material: primitive_header.material_index,
+                    material_index: primitive_header.material_index,
                     uv_headers,
                     raw_uv_sets,
                 }
@@ -432,8 +420,8 @@ impl MeshBuffer {
         let raw_textures = self.get_slice(mesh_header.texture_offset, mesh_header.texture_size);
         
         let create_texture_view = |texture_slot: Option<TextureSlot>| {
-            if let Some(slot) = texture_slot {
-                let header = texture_headers.get(slot.texture_index as usize).unwrap();            
+            texture_slot.and_then(|slot| {
+                let header = texture_headers[slot.texture_index as usize];            
                 let texture = &raw_textures[header.offset..header.offset + header.size];
                 let sampler = samplers.get(slot.sampler_index as usize).copied().unwrap_or_default();
                 let view = TextureView {
@@ -445,10 +433,8 @@ impl MeshBuffer {
                     sampler,                
                 };
 
-                Some(view)      
-            } else {
-                None
-            }
+                Some(view)   
+            })
         };
 
         materials.iter()

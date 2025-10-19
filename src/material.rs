@@ -1,11 +1,138 @@
 use bytemuck::{Pod, Zeroable};
 use gltf::material::AlphaMode;
+use wgpu::util::DeviceExt;
 
-use crate::texture::{Texture, TextureView};
+use crate::{context::RenderContext, texture::{Texture, TextureInstance, TextureView}};
 
-pub struct MaterialHandle {
-    pub diffuse_texture: Texture,
+pub enum TextureInstanceSlot {
+    BaseColor,
+    MetallicRoughness,
+    Normal,
+    Occlusion,
+    Emissive,
+}
+
+impl TextureInstanceSlot {
+    pub const COUNT: u32 = 5;
+}
+
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct MaterialUniform {
+    pub base_color_factor: [f32; 4],
+    pub emissive_factor: [f32; 3],
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub occlusion_strength: f32,
+    pub normal_scale: f32,
+    pub alpha_cutoff: f32,
+    pub alpha_mode: u32,
+    pub double_sided: u32,
+}
+
+pub struct MaterialInstance {
+    pub uniform: MaterialUniform,
+    pub uniform_buffer: wgpu::Buffer,
+    pub textures: Vec<TextureInstance>,
     pub bind_group: wgpu::BindGroup,
+}
+
+impl MaterialInstance {
+    pub fn new(material: MaterialView, label: Option<&str>, context: &RenderContext) -> Self {
+            let material_textures = [
+                material.base_color,
+                material.metallic_roughness,
+                material.normal,
+                material.occlusion,
+                material.emissive,
+            ];
+
+            let textures = material_textures
+                .iter()
+                .enumerate()
+                .map(|(index, maybe_view)| {
+                    if let Some(view) = maybe_view {
+                        TextureInstance {
+                            texture: Texture::from_view(&context.device, &context.queue, view, label),
+                            uv_index: view.uv_index,
+                        }
+                    } else {
+                        TextureInstance {
+                            texture: context.placeholder_texture(),
+                            uv_index: index as u32
+                        }                        
+                    }                
+                })                
+                .collect::<Vec<_>>();                
+
+            let uniform = MaterialUniform {
+                base_color_factor: material.base_color_factor,
+                emissive_factor: material.emissive_factor,
+                metallic_factor: material.metallic_factor,
+                roughness_factor: material.roughness_factor,
+                occlusion_strength: material.occlusion_strength,
+                normal_scale: material.normal_scale,
+                alpha_cutoff: material.alpha_cutoff,
+                alpha_mode: material.alpha_mode as u32,
+                double_sided: material.double_sided as u32,    
+            };
+
+            let uniform_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label,
+                contents: bytemuck::bytes_of(&uniform),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            
+            let (layout_entries, bind_group_entries): (Vec<_>, Vec<_>) = textures
+                .iter()
+                .enumerate()
+                .flat_map(|(index, texture_instance)| [
+                    (
+                       wgpu::BindGroupLayoutEntry {
+                            binding: (index * 2) as u32,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture { 
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true }, 
+                                view_dimension: wgpu::TextureViewDimension::D2, 
+                                multisampled: false, 
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: (index * 2) as u32,
+                            resource: wgpu::BindingResource::TextureView(&texture_instance.texture.view)
+                        },
+
+                    ),
+                    (
+                        wgpu::BindGroupLayoutEntry {
+                            binding: (index * 2 + 1) as u32,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: (index * 2 + 1) as u32,
+                            resource: wgpu::BindingResource::Sampler(&texture_instance.texture.sampler)
+                        },                                                        
+                    ),
+                ])
+                .unzip();
+
+            let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label,
+                layout: &context.texture_bind_group_layout,
+                entries: &bind_group_entries,
+            });
+            
+            Self {
+                uniform,
+                uniform_buffer,
+                textures,
+                bind_group,
+            }        
+    }
 }
 
 pub struct MaterialView<'a> {
@@ -136,16 +263,13 @@ impl Default for TextureSlot {
 
 impl TextureSlot {
     pub fn from_gltf<T: GltfTextureInfo>(texture_info: Option<T>) -> Option<Self> {
-        if let Some(texture_info) = texture_info {
+        texture_info.and_then(|texture_info| {
             let slot = Self {
                 texture_index: texture_info.texture().index() as u32,
                 uv_index: texture_info.tex_coord() as u32,
                 sampler_index: texture_info.texture().sampler().index().unwrap_or(0) as u32,
             };
-            Some(slot)
-        } else {
-            None
-            // Self::default()
-        }
+            Some(slot)            
+        })
     }
 }

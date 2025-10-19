@@ -2,6 +2,8 @@ use bytemuck::{Pod, Zeroable};
 use gltf::{image::Format as GltfImageFormat, texture::{MagFilter, MinFilter, WrappingMode}};
 use image::GenericImageView;
 
+use crate::{context::RenderContext, material::MaterialView};
+
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
 pub struct TextureFormat(pub usize);
@@ -142,7 +144,7 @@ impl Sampler {
         }        
     }
 
-    pub fn desc(&self) -> wgpu::SamplerDescriptor {
+    pub fn desc(&self) -> wgpu::SamplerDescriptor<'_> {
         let (mag_filter, min_filter, mipmap_filter) = self.get_filters();
 
         wgpu::SamplerDescriptor {
@@ -157,6 +159,27 @@ impl Sampler {
     }
 }
 
+#[derive(Debug)]
+pub struct TextureInstance {
+    pub texture: Texture,
+    pub uv_index: u32,
+}
+
+// impl TextureInstance {
+//     pub fn from_view(index: usize, view: &TextureView, label: Option<&str>, context: &RenderContext) -> Self {
+//         let texture = Texture::from_view(&context.device, &context.queue, view, label);
+//         match index {
+//             0 => Self::BaseColor(texture, view.uv_index),
+//             1 => Self::MetallicRoughness(texture, view.uv_index),
+//             2 => Self::Normal(texture, view.uv_index),
+//             3 => Self::Occlusion(texture, view.uv_index),
+//             4 => Self::Emissive(texture, view.uv_index),
+//             _ => panic!("Invalid texture slot")
+//         }
+//     }
+// }
+
+#[derive(Clone, Debug)]
 pub struct Texture {
     #[allow(unused)]
     pub texture: wgpu::Texture,
@@ -167,24 +190,74 @@ pub struct Texture {
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+    pub fn create_placeholder(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let data = [255u8, 255, 255, 255];
+        let size = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+
+        Self::from_bytes(device, queue, &data, size, &Sampler::default().desc(), Some("placeholder"))
+    }
+
     pub fn from_view(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        view: TextureView,
+        view: &TextureView,
         label: Option<&str>,
-    ) -> anyhow::Result<Self> {
-        let img = view.to_image().unwrap();
-        Ok(Self::from_image(device, queue, &img, label))
+    ) -> Self {
+        let image = view.to_image().unwrap();
+        let data = image.to_rgba8();
+        let dimensions = image.dimensions();
+        let size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth_or_array_layers: 1,
+        };
+
+        Self::from_bytes(device, queue, &data, size, &view.sampler.desc(), label)
     }
 
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bytes: &[u8],
+        data: &[u8],
+        size: wgpu::Extent3d,
+        sampler_desc: &wgpu::SamplerDescriptor,
         label: Option<&str>,
-    ) -> anyhow::Result<Self> {
-        let img = image::load_from_memory(bytes)?;
-        Ok(Self::from_image(device, queue, &img, label))
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            }, 
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * size.width),
+                rows_per_image: Some(size.height),
+            },
+            size,
+        );
+
+        let sampler = device.create_sampler(sampler_desc);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        Self { texture, view, sampler }
     }
 
     pub fn from_image(
