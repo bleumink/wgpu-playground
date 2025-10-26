@@ -2,7 +2,10 @@ use bytemuck::{Pod, Zeroable};
 use gltf::material::AlphaMode;
 use wgpu::util::DeviceExt;
 
-use crate::{context::RenderContext, texture::{Texture, TextureInstance, TextureView}};
+use crate::{
+    context::RenderContext,
+    texture::{Texture, TextureInstance, TextureView},
+};
 
 pub enum TextureInstanceSlot {
     BaseColor,
@@ -15,7 +18,6 @@ pub enum TextureInstanceSlot {
 impl TextureInstanceSlot {
     pub const COUNT: u32 = 5;
 }
-
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -31,6 +33,7 @@ pub struct MaterialUniform {
     pub double_sided: u32,
 }
 
+#[derive(Clone, Debug)]
 pub struct MaterialInstance {
     pub uniform: MaterialUniform,
     pub uniform_buffer: wgpu::Buffer,
@@ -40,70 +43,70 @@ pub struct MaterialInstance {
 
 impl MaterialInstance {
     pub fn new(material: MaterialView, label: Option<&str>, context: &RenderContext) -> Self {
-            let material_textures = [
-                material.base_color,
-                material.metallic_roughness,
-                material.normal,
-                material.occlusion,
-                material.emissive,
-            ];
+        let material_textures = [
+            material.base_color,
+            material.metallic_roughness,
+            material.normal,
+            material.occlusion,
+            material.emissive,
+        ];
 
-            let textures = material_textures
-                .iter()
-                .enumerate()
-                .map(|(index, maybe_view)| {
-                    if let Some(view) = maybe_view {
-                        TextureInstance {
-                            texture: Texture::from_view(&context.device, &context.queue, view, label),
-                            uv_index: view.uv_index,
-                        }
-                    } else {
-                        TextureInstance {
-                            texture: context.placeholder_texture(),
-                            uv_index: index as u32
-                        }                        
-                    }                
-                })                
-                .collect::<Vec<_>>();                
+        let textures = material_textures
+            .iter()
+            .enumerate()
+            .map(|(index, maybe_view)| {
+                if let Some(view) = maybe_view {
+                    TextureInstance {
+                        texture: Texture::from_view(&context.device, &context.queue, view, label),
+                        uv_index: view.uv_index,
+                    }
+                } else {
+                    TextureInstance {
+                        texture: context.placeholder_texture(),
+                        uv_index: index as u32,
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
 
-            let uniform = MaterialUniform {
-                base_color_factor: material.base_color_factor,
-                emissive_factor: material.emissive_factor,
-                metallic_factor: material.metallic_factor,
-                roughness_factor: material.roughness_factor,
-                occlusion_strength: material.occlusion_strength,
-                normal_scale: material.normal_scale,
-                alpha_cutoff: material.alpha_cutoff,
-                alpha_mode: material.alpha_mode as u32,
-                double_sided: material.double_sided as u32,    
-            };
+        let uniform = MaterialUniform {
+            base_color_factor: material.base_color_factor,
+            emissive_factor: material.emissive_factor,
+            metallic_factor: material.metallic_factor,
+            roughness_factor: material.roughness_factor,
+            occlusion_strength: material.occlusion_strength,
+            normal_scale: material.normal_scale,
+            alpha_cutoff: material.alpha_cutoff,
+            alpha_mode: material.alpha_mode as u32,
+            double_sided: material.double_sided as u32,
+        };
 
-            let uniform_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label,
-                contents: bytemuck::bytes_of(&uniform),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-            
-            let (layout_entries, bind_group_entries): (Vec<_>, Vec<_>) = textures
-                .iter()
-                .enumerate()
-                .flat_map(|(index, texture_instance)| [
+        let uniform_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label,
+            contents: bytemuck::bytes_of(&uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let (layout_entries, bind_group_entries): (Vec<_>, Vec<_>) = textures
+            .iter()
+            .enumerate()
+            .flat_map(|(index, texture_instance)| {
+                [
                     (
-                       wgpu::BindGroupLayoutEntry {
+                        wgpu::BindGroupLayoutEntry {
                             binding: (index * 2) as u32,
                             visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture { 
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true }, 
-                                view_dimension: wgpu::TextureViewDimension::D2, 
-                                multisampled: false, 
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
                             count: None,
                         },
                         wgpu::BindGroupEntry {
                             binding: (index * 2) as u32,
-                            resource: wgpu::BindingResource::TextureView(&texture_instance.texture.view)
+                            resource: wgpu::BindingResource::TextureView(&texture_instance.texture.view),
                         },
-
                     ),
                     (
                         wgpu::BindGroupLayoutEntry {
@@ -114,24 +117,25 @@ impl MaterialInstance {
                         },
                         wgpu::BindGroupEntry {
                             binding: (index * 2 + 1) as u32,
-                            resource: wgpu::BindingResource::Sampler(&texture_instance.texture.sampler)
-                        },                                                        
+                            resource: wgpu::BindingResource::Sampler(&texture_instance.texture.sampler),
+                        },
                     ),
-                ])
-                .unzip();
+                ]
+            })
+            .unzip();
 
-            let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label,
-                layout: &context.texture_bind_group_layout,
-                entries: &bind_group_entries,
-            });
-            
-            Self {
-                uniform,
-                uniform_buffer,
-                textures,
-                bind_group,
-            }        
+        let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label,
+            layout: &context.texture_bind_group_layout,
+            entries: &bind_group_entries,
+        });
+
+        Self {
+            uniform,
+            uniform_buffer,
+            textures,
+            bind_group,
+        }
     }
 }
 
@@ -144,12 +148,12 @@ pub struct MaterialView<'a> {
     pub base_color_factor: [f32; 4],
     pub emissive_factor: [f32; 3],
     pub metallic_factor: f32,
-    pub roughness_factor: f32,    
+    pub roughness_factor: f32,
     pub occlusion_strength: f32,
     pub normal_scale: f32,
     pub alpha_cutoff: f32,
-    pub alpha_mode: u8,    
-    pub double_sided: u8,    
+    pub alpha_mode: u8,
+    pub double_sided: u8,
 }
 
 #[repr(C)]
@@ -163,11 +167,11 @@ pub struct Material {
     pub base_color_factor: [f32; 4],
     pub emissive_factor: [f32; 3],
     pub metallic_factor: f32,
-    pub roughness_factor: f32,    
+    pub roughness_factor: f32,
     pub occlusion_strength: f32,
     pub normal_scale: f32,
     pub alpha_cutoff: f32,
-    pub alpha_mode: u8,    
+    pub alpha_mode: u8,
     pub double_sided: u8,
     pub _padding: [u8; 2],
 }
@@ -199,7 +203,7 @@ impl Material {
         }
     }
 
-    pub fn from_obj(material: &tobj::Material) -> Self {                
+    pub fn from_obj(material: &tobj::Material) -> Self {
         Self {
             base_color: Some(TextureSlot::default()),
             metallic_roughness: None,
@@ -215,7 +219,7 @@ impl Material {
             alpha_cutoff: 0.5,
             alpha_mode: 0,
             double_sided: 0,
-            _padding: [0; 2],            
+            _padding: [0; 2],
         }
     }
 }
@@ -226,18 +230,30 @@ pub trait GltfTextureInfo {
 }
 
 impl GltfTextureInfo for gltf::texture::Info<'_> {
-    fn texture(&self) -> gltf::Texture<'_> { self.texture() }
-    fn tex_coord(&self) -> u32 { self.tex_coord() }
+    fn texture(&self) -> gltf::Texture<'_> {
+        self.texture()
+    }
+    fn tex_coord(&self) -> u32 {
+        self.tex_coord()
+    }
 }
 
 impl GltfTextureInfo for gltf::material::NormalTexture<'_> {
-    fn texture(&self) -> gltf::Texture<'_> { self.texture() }
-    fn tex_coord(&self) -> u32 { self.tex_coord() }
+    fn texture(&self) -> gltf::Texture<'_> {
+        self.texture()
+    }
+    fn tex_coord(&self) -> u32 {
+        self.tex_coord()
+    }
 }
 
 impl GltfTextureInfo for gltf::material::OcclusionTexture<'_> {
-    fn texture(&self) -> gltf::Texture<'_> { self.texture() }
-    fn tex_coord(&self) -> u32 { self.tex_coord() }
+    fn texture(&self) -> gltf::Texture<'_> {
+        self.texture()
+    }
+    fn tex_coord(&self) -> u32 {
+        self.tex_coord()
+    }
 }
 
 #[repr(C)]
@@ -269,7 +285,7 @@ impl TextureSlot {
                 uv_index: texture_info.tex_coord() as u32,
                 sampler_index: texture_info.texture().sampler().index().unwrap_or(0) as u32,
             };
-            Some(slot)            
+            Some(slot)
         })
     }
 }

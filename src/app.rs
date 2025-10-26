@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use winit::{
     application::ApplicationHandler,
@@ -70,7 +70,7 @@ impl ApplicationHandler<State> for App {
         #[cfg(not(target_family = "wasm"))]
         {
             use futures_lite::future;
-            use winit::dpi::LogicalSize;
+            // use winit::dpi::LogicalSize;
 
             // let monitor = window.current_monitor().unwrap();
             // let size = monitor.size();
@@ -79,7 +79,7 @@ impl ApplicationHandler<State> for App {
             // let _ = window.request_inner_size(target_size);
 
             let (surface, context) = future::block_on(Surface::initialize(Arc::clone(&window))).unwrap();
-            let mut renderer = future::block_on(Renderer::new(context, render_rx, result_tx)).unwrap();
+            let renderer = future::block_on(Renderer::new(context, render_rx, result_tx)).unwrap();
 
             std::thread::spawn(move || {
                 if let Err(error) = renderer.run() {

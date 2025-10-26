@@ -12,6 +12,7 @@ mod camera;
 mod context;
 mod dialog;
 mod error;
+mod hdr;
 mod instance;
 mod light;
 mod material;
@@ -22,6 +23,7 @@ mod scene;
 mod state;
 mod surface;
 mod texture;
+mod transform;
 mod ui;
 mod vertex;
 #[cfg(target_family = "wasm")]

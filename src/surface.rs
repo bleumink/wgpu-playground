@@ -19,7 +19,7 @@ impl Default for SurfaceState {
 }
 
 pub struct Surface {
-    surface: wgpu::Surface<'static>,
+    surface: Option<wgpu::Surface<'static>>,
     config: wgpu::SurfaceConfiguration,
     state: SurfaceState,
     pending_resize: Option<(wgpu::SurfaceConfiguration, wgpu::Device)>,
@@ -66,9 +66,9 @@ impl Surface {
             desired_maximum_frame_latency: 2,
         };
 
-        let context = RenderContext::new(window, &adapter, config.clone()).await?;
+        let context = RenderContext::new(&adapter, config.clone()).await?;
         let surface_state = Self {
-            surface,
+            surface: Some(surface),
             config,
             state: SurfaceState::Unconfigured,
             pending_resize: None,
@@ -86,8 +86,10 @@ impl Surface {
     }
 
     pub fn acquire(&mut self) -> Result<wgpu::TextureView, wgpu::SurfaceError> {
-        if let SurfaceState::Configured = self.state {
-            let output = self.surface.get_current_texture()?;
+        if let SurfaceState::Configured = self.state
+            && let Some(surface) = &self.surface
+        {
+            let output = surface.get_current_texture()?;
             let view = output.texture.create_view(&wgpu::TextureViewDescriptor {
                 format: Some(self.config.format.add_srgb_suffix()),
                 ..Default::default()
@@ -102,11 +104,13 @@ impl Surface {
 
     pub fn present(&mut self) {
         if let SurfaceState::Acquired(output) = std::mem::take(&mut self.state) {
-            if let Some((config, device)) = self.pending_resize.take() {
+            if let Some((config, device)) = self.pending_resize.take()
+                && let Some(surface) = &self.surface
+            {
                 drop(output);
 
                 self.config = config;
-                self.surface.configure(&device, &self.config);
+                surface.configure(&device, &self.config);
             } else {
                 output.present();
             }
@@ -135,9 +139,11 @@ impl Surface {
                 self.pending_resize = Some((config, device));
             }
             SurfaceState::Resizing => {
-                self.config = config;
-                self.surface.configure(&device, &self.config);
-                self.state = SurfaceState::Configured;
+                if let Some(surface) = &self.surface {
+                    self.config = config;
+                    surface.configure(&device, &self.config);
+                    self.state = SurfaceState::Configured;
+                }
             }
             _ => (),
         }
@@ -145,5 +151,6 @@ impl Surface {
 
     pub fn drop(&mut self) {
         self.state = SurfaceState::Unconfigured;
+        self.surface = None;
     }
 }

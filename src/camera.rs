@@ -156,8 +156,8 @@ impl CameraController {
     pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
         let dt = dt.as_secs_f32();
 
-        let yaw = glam::Quat::from_rotation_y(self.rotation.x * self.sensitivity * dt);
-        let pitch = glam::Quat::from_axis_angle(camera.right(), self.rotation.y * self.sensitivity * dt);
+        let yaw = glam::Quat::from_rotation_y(self.rotation.x * self.sensitivity);
+        let pitch = glam::Quat::from_axis_angle(camera.right(), self.rotation.y * self.sensitivity);
         camera.orientation = ((yaw * pitch) * camera.orientation).normalize();
         self.rotation = glam::Vec2::ZERO;
 

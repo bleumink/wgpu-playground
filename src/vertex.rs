@@ -1,5 +1,5 @@
 pub trait Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static>;    
+    fn desc() -> wgpu::VertexBufferLayout<'static>;
 }
 
 pub struct VertexLayoutBuilder {
@@ -18,7 +18,7 @@ impl VertexLayoutBuilder {
     pub fn push<V: Vertex>(mut self) -> Self {
         let layout = V::desc();
         let mut attributes = layout.attributes.to_vec();
-        
+
         for attribute in attributes.iter_mut() {
             attribute.shader_location += self.location;
         }
@@ -32,8 +32,8 @@ impl VertexLayoutBuilder {
             step_mode: layout.step_mode,
             attributes: leaked_attributes,
         };
-        
-        self.layouts.push(new_layout);        
+
+        self.layouts.push(new_layout);
         self
     }
 

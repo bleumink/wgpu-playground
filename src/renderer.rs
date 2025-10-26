@@ -15,12 +15,13 @@ use wasm_bindgen::prelude::*;
 use crate::{
     asset::Asset,
     context::RenderContext,
-    mesh::{Mesh, MeshVertex, TextureCoordinate},
+    mesh::{MeshVertex, Scene, TextureCoordinate},
     pointcloud::{PointVertex, Pointcloud},
-    scene::{DrawScene, RenderKind, Scene},
+    scene::{DrawScene, RenderKind, SceneGraph},
     state::EntityId,
     surface::Surface,
     texture::Texture,
+    transform::TransformBuffer,
     ui::UiData,
     vertex::{Vertex, VertexLayoutBuilder},
 };
@@ -31,6 +32,10 @@ use crate::{
 //     [0.0, 1.0, 0.0, 0.0],
 //     [0.0, 0.0, 0.0, 1.0],
 // ];
+
+const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
+    1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+]);
 
 pub type RenderId = Uuid;
 
@@ -111,115 +116,6 @@ impl CameraUniform {
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct TransformUniform([[f32; 4]; 4]);
-
-impl TransformUniform {
-    pub fn new(transform: glam::Mat4) -> Self {
-        Self(transform.to_cols_array_2d())
-    }
-
-    pub fn identity() -> Self {
-        Self(glam::Mat4::IDENTITY.to_cols_array_2d())
-    }
-}
-
-pub struct TransformBuffer {
-    transforms: Vec<TransformUniform>,
-    capacity: usize,
-    buffer: wgpu::Buffer,
-    layout: wgpu::BindGroupLayout,
-}
-
-impl TransformBuffer {
-    pub fn new(capacity: usize, context: &RenderContext) -> Self {
-        let layout = context
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Transform bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let buffer = Self::create_buffer(capacity, context);
-        let transforms = Vec::new();
-
-        Self {
-            transforms,
-            capacity,
-            buffer,
-            layout,
-        }
-    }
-
-    fn create_buffer(capacity: usize, context: &RenderContext) -> wgpu::Buffer {
-        context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Transform buffer"),
-            size: (capacity * std::mem::size_of::<TransformUniform>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    pub fn write(&mut self, index: usize, matrix: glam::Mat4, context: &RenderContext) {
-        if index >= self.transforms.len() {
-            self.transforms.resize(index + 1, TransformUniform::identity());
-        }
-
-        let transform = TransformUniform::new(matrix);
-        self.transforms[index] = transform;
-
-        let offset = (index * std::mem::size_of::<TransformUniform>()) as u64;
-        context
-            .queue
-            .write_buffer(&self.buffer, offset, bytemuck::bytes_of(&transform));
-    }
-
-    pub fn request_slot(&mut self, context: &RenderContext) -> usize {
-        let index = self.transforms.len();
-        if self.transforms.len() >= self.capacity {
-            self.capacity *= 2;
-            self.buffer = Self::create_buffer(self.capacity, context);
-
-            context
-                .queue
-                .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.transforms));
-        }
-
-        self.transforms.push(TransformUniform::identity());
-        index
-    }
-
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
-
-    pub fn layout(&self) -> &wgpu::BindGroupLayout {
-        &self.layout
-    }
-}
-
 pub struct Frame {
     encoder: wgpu::CommandEncoder,
     view: wgpu::TextureView,
@@ -265,18 +161,82 @@ pub enum RenderCommand {
 #[derive(Debug)]
 pub enum RenderEvent {
     FrameComplete,
-    LoadComplete(RenderId, Option<String>),
-    ResizeComplete(wgpu::SurfaceConfiguration, wgpu::Device),
+    LoadComplete {
+        render_id: RenderId,
+        transform: Option<glam::Mat4>,
+        label: Option<String>,
+    },
+    ResizeComplete {
+        config: wgpu::SurfaceConfiguration,
+        device: wgpu::Device,
+    },
     Stopped,
 }
+
+// pub trait RenderLike {
+//     fn send(&self, command: RenderCommand);
+//     fn draw_frame(&self);
+//     fn on_event(func: fn(RenderEvent));
+// }
+
+// impl RenderLike for NewRenderer {
+//     fn draw_frame(&self) {
+
+//     }
+
+//     fn on_event(func: fn(RenderEvent)) {
+
+//     }
+
+//     fn send(&self, command: RenderCommand) {
+
+//     }
+// }
+
+// pub struct NewRenderer {
+//     surface: Surface,
+//     command_tx: Sender<RenderCommand>,
+//     event_tx: Sender<RenderEvent>,
+//     event_rx: Option<Receiver<RenderEvent>>,
+// }
+
+// impl NewRenderer {
+//     pub fn new(window: Arc<winit::window::Window>) -> anyhow::Result<Self> {
+//         use futures_lite::future;
+
+//         let (command_tx, command_rx) = crossbeam::channel::unbounded();
+//         let (event_tx, event_rx) = crossbeam::channel::unbounded();
+
+//         let (surface, context) = future::block_on(Surface::initialize(Arc::clone(&window)))?;
+//         let mut renderer = future::block_on(Renderer::new(context, command_rx, event_tx.clone()))?;
+
+//         let new_renderer = Self {
+//             surface,
+//             command_tx,
+//             event_tx,
+//             event_rx: Some(event_rx),
+//         };
+
+//         std::thread::spawn(move || {
+//             if let Err(error) = renderer.run() {
+//                 log::error!("Renderer encountered an error: {}", error);
+//             }
+//         });
+
+//         Ok(new_renderer)
+//     }
+
+//     pub fn take_receiver(&mut self) -> Option<Receiver<RenderEvent>> {
+//         self.event_rx.take()
+//     }
+// }
 
 pub struct Renderer {
     is_running: bool,
     context: RenderContext,
     camera: Camera,
-    scene: Scene,
+    scene: SceneGraph,
     egui_renderer: EguiRenderer,
-    transform_buffer: TransformBuffer,
     render_pipeline: wgpu::RenderPipeline,
     pointcloud_pipeline: wgpu::RenderPipeline,
     render_rx: Receiver<RenderCommand>,
@@ -291,7 +251,7 @@ impl Renderer {
     ) -> anyhow::Result<Self> {
         let camera = Camera::new(&context);
         let egui_renderer = EguiRenderer::new(&context.device, context.config.format.add_srgb_suffix(), None, 1, true);
-        let transform_buffer = TransformBuffer::new(128, &context);
+        let scene = SceneGraph::new(&context);
 
         let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -308,15 +268,16 @@ impl Renderer {
             bind_group_layouts: &[
                 &context.texture_bind_group_layout,
                 &camera.layout,
-                &transform_buffer.layout,
+                scene.transform_layout(),
             ],
             push_constant_ranges: &[],
         });
 
-        let mesh_vertex_layout = (0..RenderContext::MAX_UV_SETS).fold(
-            VertexLayoutBuilder::new().push::<MeshVertex>(),
-            |builder, _| builder.push::<TextureCoordinate>(),
-        ).build();
+        let mesh_vertex_layout = (0..RenderContext::MAX_UV_SETS)
+            .fold(VertexLayoutBuilder::new().push::<MeshVertex>(), |builder, _| {
+                builder.push::<TextureCoordinate>()
+            })
+            .build();
 
         let render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render pipeline"),
@@ -364,13 +325,11 @@ impl Renderer {
 
         let pointcloud_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Pointcloud pipeline layout"),
-            bind_group_layouts: &[&camera.layout, &transform_buffer.layout],
+            bind_group_layouts: &[&camera.layout, scene.transform_layout()],
             push_constant_ranges: &[],
         });
 
-        let pointcloud_vertex_layout = VertexLayoutBuilder::new()
-            .push::<PointVertex>()
-            .build();
+        let pointcloud_vertex_layout = VertexLayoutBuilder::new().push::<PointVertex>().build();
 
         let pointcloud_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Pointcloud pipeline"),
@@ -412,15 +371,12 @@ impl Renderer {
             cache: None,
         });
 
-        let scene = Scene::new();
-
         Ok(Self {
             is_running: true,
             context,
             camera,
             scene,
             egui_renderer,
-            transform_buffer,
             render_pipeline,
             pointcloud_pipeline,
             render_rx: render_receiver,
@@ -434,25 +390,35 @@ impl Renderer {
 
     fn load_asset(&mut self, asset: Asset) -> anyhow::Result<()> {
         match asset {
-            Asset::Model(buffer, label) => {
-                let model = Mesh::from_buffer(buffer, &self.context, label.clone());
-                let render_id = self.scene.add_group(
-                    RenderKind::Model(model),
-                    self.render_pipeline.clone(),
-                    &self.transform_buffer,
-                    &self.context,
-                );
-                self.result_tx.send(RenderEvent::LoadComplete(render_id, label))?;
+            Asset::Scene(buffer, label) => {
+                let scene = Scene::from_buffer(buffer, &self.context, label.clone());
+                for node in scene.nodes {
+                    let render_id = self.scene.add_group(
+                        RenderKind::Mesh(node.mesh, scene.materials.clone()),
+                        self.render_pipeline.clone(),
+                        &self.context,
+                    );
+
+                    self.result_tx.send(RenderEvent::LoadComplete {
+                        render_id,
+                        transform: Some(node.transform),
+                        label: label.clone(),
+                    })?;
+                }
             }
             Asset::Pointcloud(buffer, label) => {
                 let pointcloud = Pointcloud::from_buffer(buffer, &self.context, label.clone());
                 let render_id = self.scene.add_group(
                     RenderKind::Pointcloud(pointcloud),
                     self.pointcloud_pipeline.clone(),
-                    &self.transform_buffer,
                     &self.context,
                 );
-                self.result_tx.send(RenderEvent::LoadComplete(render_id, label))?;
+
+                self.result_tx.send(RenderEvent::LoadComplete {
+                    render_id,
+                    transform: Some(MAT4_SWAP_YZ),
+                    label,
+                })?;
             }
         }
 
@@ -460,10 +426,7 @@ impl Renderer {
     }
 
     fn spawn_asset(&mut self, entity_id: EntityId, render_id: RenderId, transform: glam::Mat4) {
-        let transform_index = self.transform_buffer.request_slot(&self.context);
-        self.transform_buffer.write(transform_index, transform, &self.context);
-        self.scene
-            .add_entity(render_id, entity_id, transform_index, &self.context);
+        self.scene.add_entity(render_id, entity_id, transform, &self.context);
     }
 
     pub fn render_scene(&mut self, frame: &mut Frame) {
@@ -571,8 +534,10 @@ impl Renderer {
             } => self.spawn_asset(entity_id, render_id, transform),
             RenderCommand::Resize(config) => {
                 self.context.pending_resize = Some(config.clone());
-                self.result_tx
-                    .send(RenderEvent::ResizeComplete(config, self.context.device.clone()))?;
+                self.result_tx.send(RenderEvent::ResizeComplete {
+                    config,
+                    device: self.context.device.clone(),
+                })?;
             }
             RenderCommand::Translate { uuid, translation } => (),
             RenderCommand::Stop => {
@@ -584,7 +549,7 @@ impl Renderer {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn run(&mut self) -> anyhow::Result<()> {
+    pub fn run(mut self) -> anyhow::Result<()> {
         struct Inbox {
             camera: Option<RenderCommand>,
             resize: Option<RenderCommand>,

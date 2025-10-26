@@ -1,5 +1,8 @@
 use bytemuck::{Pod, Zeroable};
-use gltf::{image::Format as GltfImageFormat, texture::{MagFilter, MinFilter, WrappingMode}};
+use gltf::{
+    image::Format as GltfImageFormat,
+    texture::{MagFilter, MinFilter, WrappingMode},
+};
 use image::GenericImageView;
 
 use crate::{context::RenderContext, material::MaterialView};
@@ -33,11 +36,11 @@ impl TextureFormat {
     }
 
     pub fn to_image(self, width: u32, height: u32, data: &[u8]) -> Option<image::DynamicImage> {
-        match self {            
+        match self {
             Self::RGBA8 => Self::make_image(width, height, data, image::DynamicImage::ImageRgba8),
             Self::RGB8 => Self::make_image(width, height, data, image::DynamicImage::ImageRgb8),
             Self::RG8 => Self::make_image(width, height, data, image::DynamicImage::ImageLumaA8),
-            Self::R8 => Self::make_image(width, height, data, image::DynamicImage::ImageLuma8),            
+            Self::R8 => Self::make_image(width, height, data, image::DynamicImage::ImageLuma8),
             _ => panic!("Unsupported texture format"),
         }
     }
@@ -45,7 +48,7 @@ impl TextureFormat {
 
 #[derive(Debug)]
 pub struct TextureView<'a> {
-    pub texture: &'a [u8],    
+    pub texture: &'a [u8],
     pub sampler: Sampler,
     pub uv_index: u32,
     pub format: TextureFormat,
@@ -56,7 +59,7 @@ pub struct TextureView<'a> {
 impl TextureView<'_> {
     pub fn to_image(&self) -> Option<image::DynamicImage> {
         self.format.to_image(self.width, self.height, self.texture)
-    }    
+    }
 }
 
 #[repr(C)]
@@ -67,7 +70,7 @@ pub struct Sampler {
     pub mipmap_filter: u8,
     pub address_mode_u: u8,
     pub address_mode_v: u8,
-}   
+}
 
 impl Default for Sampler {
     fn default() -> Self {
@@ -116,7 +119,7 @@ impl Sampler {
             Some(MinFilter::NearestMipmapLinear) => (0, 1),
             Some(MinFilter::LinearMipmapLinear) => (1, 1),
             None => (1, 1),
-        };            
+        };
 
         let mag_filter = match sampler.mag_filter().unwrap_or(MagFilter::Linear) {
             MagFilter::Nearest => 0,
@@ -141,7 +144,7 @@ impl Sampler {
             mipmap_filter,
             address_mode_u,
             address_mode_v,
-        }        
+        }
     }
 
     pub fn desc(&self) -> wgpu::SamplerDescriptor<'_> {
@@ -155,29 +158,15 @@ impl Sampler {
             min_filter,
             mipmap_filter,
             ..Default::default()
-        }        
+        }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TextureInstance {
     pub texture: Texture,
     pub uv_index: u32,
 }
-
-// impl TextureInstance {
-//     pub fn from_view(index: usize, view: &TextureView, label: Option<&str>, context: &RenderContext) -> Self {
-//         let texture = Texture::from_view(&context.device, &context.queue, view, label);
-//         match index {
-//             0 => Self::BaseColor(texture, view.uv_index),
-//             1 => Self::MetallicRoughness(texture, view.uv_index),
-//             2 => Self::Normal(texture, view.uv_index),
-//             3 => Self::Occlusion(texture, view.uv_index),
-//             4 => Self::Emissive(texture, view.uv_index),
-//             _ => panic!("Invalid texture slot")
-//         }
-//     }
-// }
 
 #[derive(Clone, Debug)]
 pub struct Texture {
@@ -198,15 +187,17 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
-        Self::from_bytes(device, queue, &data, size, &Sampler::default().desc(), Some("placeholder"))
+        Self::from_bytes(
+            device,
+            queue,
+            &data,
+            size,
+            &Sampler::default().desc(),
+            Some("placeholder"),
+        )
     }
 
-    pub fn from_view(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &TextureView,
-        label: Option<&str>,
-    ) -> Self {
+    pub fn from_view(device: &wgpu::Device, queue: &wgpu::Queue, view: &TextureView, label: Option<&str>) -> Self {
         let image = view.to_image().unwrap();
         let data = image.to_rgba8();
         let dimensions = image.dimensions();
@@ -244,7 +235,7 @@ impl Texture {
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
-            }, 
+            },
             &data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,

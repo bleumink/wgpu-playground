@@ -86,7 +86,7 @@ impl State {
         let size = window.inner_size();
         let camera = Camera::new((0.0, 5.0, 10.0), 45.0_f32.to_radians(), -20.0_f32.to_radians());
         let projection = Projection::new(size.width, size.height, 60.0_f32.to_radians(), 0.1, 500.0);
-        let camera_controller = CameraController::new(8.0, 0.4);
+        let camera_controller = CameraController::new(8.0, 0.004);
         let loader = AssetLoader::new(render_sender.clone());
         let ui = Ui::new(Arc::clone(&window), loader.clone());
         let entities = HashMap::new();
@@ -121,10 +121,14 @@ impl State {
                 RenderEvent::FrameComplete => {
                     self.surface.present();
                 }
-                RenderEvent::ResizeComplete(config, device) => {
+                RenderEvent::ResizeComplete { config, device } => {
                     self.surface.apply_resize(config, device);
                 }
-                RenderEvent::LoadComplete(render_id, label) => {
+                RenderEvent::LoadComplete {
+                    render_id,
+                    transform,
+                    label,
+                } => {
                     if label.clone().unwrap() == "cube.obj" {
                         const NUM_INSTANCES_PER_ROW: u32 = 10;
                         const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3 {
@@ -161,29 +165,33 @@ impl State {
                                 glam::Vec3::ONE,
                                 label.clone(),
                             );
+
+                            let translation = glam::Vec3 {
+                                x: 0.0,
+                                y: -5.0,
+                                z: 0.0,
+                            };
                             self.render_tx
                                 .send(RenderCommand::SpawnAsset {
                                     entity_id,
                                     render_id,
-                                    transform: entity.to_transform(),
+                                    transform: glam::Mat4::from_translation(translation) * entity.to_transform(),
                                 })
                                 .unwrap();
                             self.entities.insert(entity_id, entity);
                         }
                     } else {
+                        let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
+                        let (scale, rotation, position) = transform.to_scale_rotation_translation();
+
                         let entity_id = Entity::new_id();
-                        let entity = Entity::new(
-                            render_id,
-                            glam::Vec3::ZERO,
-                            glam::Quat::IDENTITY,
-                            glam::Vec3::ONE,
-                            label,
-                        );
+                        let entity = Entity::new(render_id, position, rotation, scale, label);
+
                         self.render_tx
                             .send(RenderCommand::SpawnAsset {
                                 entity_id,
                                 render_id,
-                                transform: MAT4_SWAP_YZ * entity.to_transform(),
+                                transform,
                             })
                             .unwrap();
                         self.entities.insert(entity_id, entity);
@@ -371,7 +379,7 @@ impl State {
     }
 
     pub fn exit(&mut self) {
-        self.is_running = false;
+        self.is_running = false;        
     }
 
     pub fn window(&self) -> &Arc<Window> {

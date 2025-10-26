@@ -1,11 +1,9 @@
-use std::{cell::OnceCell, rc::Rc, sync::Arc};
+use std::cell::OnceCell;
 
-use winit::window::Window;
-
-use crate::{surface::Surface, texture::Texture};
+use crate::texture::Texture;
 
 pub struct RenderContext {
-    pub window: Arc<Window>,
+    // pub window: Arc<Window>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
@@ -20,7 +18,7 @@ impl RenderContext {
     pub const TEXTURE_COUNT: usize = 5;
 
     pub async fn new(
-        window: Arc<Window>,
+        // window: Arc<Window>,
         adapter: &wgpu::Adapter,
         config: wgpu::SurfaceConfiguration,
     ) -> anyhow::Result<Self> {
@@ -56,7 +54,7 @@ impl RenderContext {
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
-                    },                    
+                    },
                 ]
             })
             .collect::<Vec<_>>();
@@ -70,7 +68,7 @@ impl RenderContext {
         let depth_texture = Texture::create_depth_texture(Some("Depth texture"), &device, &config);
 
         Ok(Self {
-            window,
+            // window,
             device,
             queue,
             config,
@@ -82,9 +80,9 @@ impl RenderContext {
     }
 
     pub fn placeholder_texture(&self) -> Texture {
-        let texture = self.placeholder_texture.get_or_init(
-            || Texture::create_placeholder(&self.device, &self.queue)
-        );
+        let texture = self
+            .placeholder_texture
+            .get_or_init(|| Texture::create_placeholder(&self.device, &self.queue));
 
         texture.clone()
     }

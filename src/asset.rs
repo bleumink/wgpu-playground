@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_family = "wasm")]
 use crate::worker::{AssetKind, LoadTask, UploadTask, WorkerPool};
 
-use crate::{instance::Instance, mesh::MeshBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
+use crate::{mesh::SceneBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ResourcePath {
@@ -106,14 +106,14 @@ impl std::fmt::Display for ResourcePath {
 
 pub enum Asset {
     Pointcloud(PointcloudBuffer, Option<String>),
-    Model(MeshBuffer, Option<String>),
+    Scene(SceneBuffer, Option<String>),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub enum LoadOptions {
-    Transform(glam::Mat4),
-    Instanced(Vec<Instance>),
-}
+// #[derive(Clone, Serialize, Deserialize)]
+// pub enum LoadOptions {
+//     Transform(glam::Mat4),
+//     Instanced(Vec<Instance>),
+// }
 
 #[derive(Clone)]
 pub struct AssetLoader {
@@ -156,9 +156,9 @@ impl AssetLoader {
             let filename = path.filename().to_string();
 
             std::thread::spawn(move || {
-                let model = future::block_on(MeshBuffer::from_obj(&path)).unwrap();
+                let scene = future::block_on(SceneBuffer::from_obj(&path)).unwrap();
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename))))
+                    .send(RenderCommand::LoadAsset(Asset::Scene(scene, Some(filename))))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
             });
@@ -179,9 +179,9 @@ impl AssetLoader {
             let filename = path.filename().to_string();
 
             std::thread::spawn(move || {
-                let model = future::block_on(MeshBuffer::from_gltf(&path)).unwrap();
+                let scene = future::block_on(SceneBuffer::from_gltf(&path)).unwrap();
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename))))
+                    .send(RenderCommand::LoadAsset(Asset::Scene(scene, Some(filename))))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
             });

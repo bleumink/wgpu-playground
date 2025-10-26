@@ -84,7 +84,7 @@ impl WorkerRuntime {
     }
 }
 
-pub trait WorkerTask: 'static {
+pub trait WorkerTask {
     const HANDLE: &'static str;
 
     fn from_message(payload: JsValue) -> Self;
