@@ -91,7 +91,7 @@ impl State {
         let ui = Ui::new(Arc::clone(&window), loader.clone());
         let entities = HashMap::new();
 
-        loader.load(ResourcePath::new("cube.obj"));
+        loader.load(ResourcePath::new("cube.obj").unwrap());
         // loader.load(ResourcePath::new("1612_9070.laz"));
 
         Ok(Self {
@@ -255,7 +255,11 @@ impl State {
 
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
-                RenderEvent::LoadComplete(render_id, label) => {
+                RenderEvent::LoadComplete {
+                    render_id,
+                    transform,
+                    label,
+                } => {
                     if label.clone().unwrap() == "cube.obj" {
                         const NUM_INSTANCES_PER_ROW: u32 = 10;
                         const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3 {
@@ -292,29 +296,32 @@ impl State {
                                 glam::Vec3::ONE,
                                 label.clone(),
                             );
+                            let translation = glam::Vec3 {
+                                x: 0.0,
+                                y: -5.0,
+                                z: 0.0,
+                            };
                             self.render_tx
                                 .send(RenderCommand::SpawnAsset {
                                     entity_id,
                                     render_id,
-                                    transform: entity.to_transform(),
+                                    transform: glam::Mat4::from_translation(translation) * entity.to_transform(),
                                 })
                                 .unwrap();
                             self.entities.insert(entity_id, entity);
                         }
                     } else {
+                        let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
+                        let (scale, rotation, position) = transform.to_scale_rotation_translation();
+
                         let entity_id = Entity::new_id();
-                        let entity = Entity::new(
-                            render_id,
-                            glam::Vec3::ZERO,
-                            glam::Quat::IDENTITY,
-                            glam::Vec3::ONE,
-                            label,
-                        );
+                        let entity = Entity::new(render_id, position, rotation, scale, label);
+
                         self.render_tx
                             .send(RenderCommand::SpawnAsset {
                                 entity_id,
                                 render_id,
-                                transform: MAT4_SWAP_YZ * entity.to_transform(),
+                                transform,
                             })
                             .unwrap();
                         self.entities.insert(entity_id, entity);

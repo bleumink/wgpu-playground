@@ -10,91 +10,224 @@ use instant::Instant;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_family = "wasm")]
-use crate::worker::{AssetKind, LoadTask, UploadTask, WorkerPool};
+use crate::worker::{LoadTask, UploadTask, WorkerPool};
 
 use crate::{mesh::SceneBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub enum ResourcePath {
-    File(String),
-    Url(String),
+    File(std::path::PathBuf),
+    Url(reqwest::Url),
+    #[cfg(target_family = "wasm")]
+    Upload(web_sys::File),
 }
 
+#[cfg(target_family = "wasm")]
+#[derive(Clone, Serialize, Deserialize)]
+pub enum SerializableResourcePath {
+    File(std::path::PathBuf),
+    Url(reqwest::Url),
+}
+
+// #[async_trait(?Send)]
+// pub trait Resource {
+//     fn as_serializable(&self) -> Option<SerializableResourcePath>;
+//     fn as_str(&self) -> Cow<'_, str>;
+//     fn file_name(&self) -> Cow<'_, str>;
+//     fn extension(&self) -> Option<Cow<'_, str>>;
+//     fn create_relative(&self, name: &str) -> Self;
+//     async fn load_string(&self) -> anyhow::Result<String>;
+//     async fn load_binary(&self) -> anyhow::Result<Vec<u8>>;
+// }
+
+// #[cfg(target_family = "wasm")]
+// #[async_trait(?Send)]
 impl ResourcePath {
-    pub fn new(path: &str) -> ResourcePath {
+    pub fn new(path: &str) -> anyhow::Result<Self> {
         #[cfg(not(target_family = "wasm"))]
-        return ResourcePath::File(path.to_string());
-
+        return Ok(ResourcePath::File(Path::new(path).to_path_buf()));
+        
         #[cfg(target_family = "wasm")]
-        return ResourcePath::Url(format_url(path));
+        return Ok(ResourcePath::Url(format_url(path)));        
     }
 
-    pub fn as_str(&self) -> &str {
+    #[cfg(target_family = "wasm")]
+    pub fn as_serializable(&self) -> Option<SerializableResourcePath> {
+        Option::<SerializableResourcePath>::from(self)
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub fn file(&self) -> Option<&web_sys::File> {
         match self {
-            ResourcePath::File(path) | ResourcePath::Url(path) => path.as_str(),
+            Self::File(_) | Self::Url(_) => None,
+            Self::Upload(file) => Some(file),
         }
     }
 
-    pub fn extension(&self) -> Option<&str> {
+    pub fn url(&self) -> Option<&reqwest::Url> {
         match self {
-            ResourcePath::File(path) | ResourcePath::Url(path) => {
-                Path::new(path).extension().and_then(|extension| extension.to_str())
-            }
+            Self::File(_) => None,
+            Self::Url(url) => Some(url),
+            #[cfg(target_family = "wasm")]
+            Self::Upload(_) => None,
         }
     }
 
-    pub fn filename(&self) -> Cow<'_, str> {
+    pub fn path(&self) -> Option<&std::path::Path> {
         match self {
-            ResourcePath::File(path) | ResourcePath::Url(path) => {
-                Path::new(path).file_name().unwrap().to_string_lossy()
-            }
+            Self::File(path) => Some(path.as_path()),
+            Self::Url(_) => None,
+            #[cfg(target_family = "wasm")]
+            Self::Upload(_) => None,
         }
     }
 
-    pub fn create_relative(&self, path: &str) -> ResourcePath {
-        let relative_path = match self {
-            ResourcePath::File(p) | ResourcePath::Url(p) => match Path::new(p).parent() {
-                Some(parent) => parent.join(path),
-                None => Path::new(".").join(path),
+    pub fn as_str(&self) -> Cow<'_, str> {
+        match self {
+            Self::File(path) => match path.to_str() {
+                Some(value) => Cow::Borrowed(value),
+                None => Cow::Owned(path.display().to_string())
+            },
+            Self::Url(url) => Cow::Borrowed(url.as_str()),
+            #[cfg(target_family = "wasm")]
+            Self::Upload(file) => Cow::Owned(file.name()),
+        }
+    }
+
+    pub fn file_name(&self) -> Cow<'_, str> {
+        match self {
+            Self::File(path) => {
+                path.file_name().and_then(|os_str| os_str.to_str())
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| {
+                    Cow::Owned(path.display().to_string())
+                })
+            },
+            Self::Url(url) => {            
+                let path = url.path();
+                Path::new(path).file_name().and_then(|os_str| os_str.to_str())
+                    .map(Cow::Borrowed)
+                    .unwrap_or_else(|| {
+                        Cow::Owned(String::new())
+                    })                                
+            },
+            #[cfg(target_family = "wasm")]
+            Self::Upload(file) => {
+                Cow::Owned(file.name())
             },
         }
-        .to_string_lossy()
-        .to_string();
+    }
 
+    pub fn extension(&self) -> Option<Cow<'_, str>> {
         match self {
-            ResourcePath::File(_) => ResourcePath::File(relative_path),
-            ResourcePath::Url(_) => ResourcePath::Url(relative_path),
+            Self::File(path) => path.extension().and_then(|extension| extension.to_str()).map(Cow::Borrowed),
+            Self::Url(url) => Path::new(url.path()).extension().and_then(|extension| extension.to_str()).map(Cow::Borrowed),
+            #[cfg(target_family = "wasm")]
+            Self::Upload(file) => {        
+                let name = file.name();
+                Path::new(&name)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| Cow::Owned(extension.to_string()))
+            },
+        }        
+    }
+
+    pub fn create_relative(&self, name: &str) -> Self {
+        match self {
+            Self::File(path) => {
+                let new_path = path.parent().map(|parent| parent.join(name))
+                .unwrap_or_else(|| std::path::PathBuf::from(name));
+                Self::File(new_path)
+            },
+            Self::Url(url) => {
+                let mut new_url = url.clone();
+                {   
+                    let mut segments = new_url.path_segments_mut().expect("base URL cannot be base");
+                    segments.pop_if_empty();
+                    segments.pop();
+                    segments.push(name);
+                }
+
+                Self::Url(new_url)
+            },
+            #[cfg(target_family = "wasm")]
+            Self::Upload(file) => {
+                let parent = file.name();
+                let base = Path::new(&parent)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""));
+                let new_name = base.join(name).display().to_string();
+                Self::Url(reqwest::Url::parse(&format!("file:///{}", new_name)).unwrap())
+            }
         }
     }
 
     pub async fn load_string(&self) -> anyhow::Result<String> {
         let text = match self {
-            ResourcePath::File(path) => {
+            Self::File(path) => {
                 let path_buf = std::path::Path::new(env!("OUT_DIR")).join("res").join(path);
                 std::fs::read_to_string(path_buf)?
             }
-            ResourcePath::Url(url) => {
-                let response = reqwest::get(url).await?;
+            Self::Url(url) => {                
+                let response = reqwest::get(url.as_str()).await?;
                 response.text().await?
+            },
+            #[cfg(target_family = "wasm")]
+            Self::Upload(_) => {
+                let bytes = self.load_binary().await?;
+                String::from_utf8(bytes)?
             }
         };
 
         Ok(text)
     }
 
-    pub async fn load_binary(&self) -> anyhow::Result<Vec<u8>> {
+    pub async fn load_binary(&self) -> anyhow::Result<Vec<u8>> {        
         let data = match self {
-            ResourcePath::File(path) => {
+            Self::File(path) => {
                 let path_buf = std::path::Path::new(env!("OUT_DIR")).join("res").join(path);
                 std::fs::read(path_buf)?
             }
-            ResourcePath::Url(url) => {
-                let response = reqwest::get(url).await?;
+            Self::Url(url) => {
+                let response = reqwest::get(url.as_str()).await?;
                 response.bytes().await?.to_vec()
+            },
+            #[cfg(target_family = "wasm")]
+            Self::Upload(file) => {
+                use wasm_bindgen_futures::JsFuture;
+
+                let buffer = JsFuture::from(file.array_buffer()).await.unwrap();
+                let array = js_sys::Uint8Array::new(&buffer);
+
+                let mut data = vec![0u8; array.length() as usize];
+                array.copy_to(&mut data);
+                data
             }
         };
 
-        Ok(data)
+        Ok(data)        
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl From<&ResourcePath> for Option<SerializableResourcePath> {
+    fn from(value: &ResourcePath) -> Self {
+        match value {
+            ResourcePath::File(path) => Some(SerializableResourcePath::File(path.clone())),
+            ResourcePath::Url(url) => Some(SerializableResourcePath::Url(url.clone())),
+            ResourcePath::Upload(_) => None,
+        }
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl From<SerializableResourcePath> for ResourcePath {
+    fn from(value: SerializableResourcePath) -> Self {
+        match value {
+            SerializableResourcePath::File(path) => ResourcePath::File(path),
+            SerializableResourcePath::Url(url) => ResourcePath::Url(url),
+        }
     }
 }
 
@@ -104,16 +237,51 @@ impl std::fmt::Display for ResourcePath {
     }
 }
 
-pub enum Asset {
+pub enum AssetBuffer {
     Pointcloud(PointcloudBuffer, Option<String>),
     Scene(SceneBuffer, Option<String>),
 }
 
-// #[derive(Clone, Serialize, Deserialize)]
-// pub enum LoadOptions {
-//     Transform(glam::Mat4),
-//     Instanced(Vec<Instance>),
-// }
+#[derive(Clone, Serialize, Deserialize)]
+pub enum AssetKind {
+    Obj,
+    Gltf,
+    Pointcloud,
+}
+
+impl AssetKind {
+    pub fn to_str(&self) -> &str {
+        match self {
+            AssetKind::Obj => "obj",
+            AssetKind::Gltf => "gltf",
+            AssetKind::Pointcloud => "pointcloud",
+        }
+    }
+
+    pub fn from_str(kind: &str) -> Option<AssetKind> {
+        match kind {
+            "obj" => Some(AssetKind::Obj),
+            "gltf" => Some(AssetKind::Gltf),
+            "pointcloud" => Some(AssetKind::Pointcloud),
+            _ => None,
+        }
+    }
+
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        match extension {
+            "obj" => Some(Self::Obj),
+            "gltf" | "glb" => Some(Self::Gltf),
+            "las" | "laz" => Some(Self::Pointcloud),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for AssetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
 
 #[derive(Clone)]
 pub struct AssetLoader {
@@ -132,20 +300,21 @@ impl AssetLoader {
     }
 
     pub fn load(&self, path: ResourcePath) {
-        match path.extension() {
-            Some("obj") => self.load_obj(path),
-            Some("gltf") | Some("glb") => self.load_gltf(path),
-            Some("las") | Some("laz") => self.load_pointcloud(path),
-            _ => (),
-        }
+        if let Some(extension) = path.extension().as_deref() {
+            if let Some(kind) = AssetKind::from_extension(extension) {
+                self.load_kind(kind, path);
+            } else {
+                log::error!("Unsupported resource");
+            }
+        }        
     }
 
-    #[cfg(target_family = "wasm")]
-    pub fn load_from_dialog(&self, file: web_sys::File) {
-        self.worker_pool.submit(UploadTask {
-            kind: AssetKind::Pointcloud,
-            file,
-        });
+    fn load_kind(&self, kind: AssetKind, path: ResourcePath) {
+        match kind {
+            AssetKind::Obj => self.load_obj(path),
+            AssetKind::Gltf => self.load_gltf(path),
+            AssetKind::Pointcloud => self.load_pointcloud(path),
+        }
     }
 
     fn load_obj(&self, path: ResourcePath) {
@@ -153,22 +322,34 @@ impl AssetLoader {
         {
             let sender = self.render_tx.clone();
             let timestamp = Instant::now();
-            let filename = path.filename().to_string();
+            let filename = path.file_name().to_string();
 
             std::thread::spawn(move || {
                 let scene = future::block_on(SceneBuffer::from_obj(&path)).unwrap();
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Scene(scene, Some(filename))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(scene, Some(filename))))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
             });
         }
 
         #[cfg(target_family = "wasm")]
-        self.worker_pool.submit(LoadTask {
-            kind: AssetKind::Model,
-            path,
-        });
+        {
+            match path {
+                ResourcePath::File(_) | ResourcePath::Url(_) => {
+                    self.worker_pool.submit(LoadTask {
+                        kind: AssetKind::Obj,
+                        path: path.as_serializable().unwrap(),
+                    });
+                },
+                ResourcePath::Upload(_) => {
+                    self.worker_pool.submit(UploadTask {
+                        kind: AssetKind::Obj,
+                        path,
+                    });
+                }
+            };
+        }
     }
 
     fn load_gltf(&self, path: ResourcePath) {
@@ -176,22 +357,35 @@ impl AssetLoader {
         {
             let sender = self.render_tx.clone();
             let timestamp = Instant::now();
-            let filename = path.filename().to_string();
+            let filename = path.file_name().to_string();
 
             std::thread::spawn(move || {
-                let scene = future::block_on(SceneBuffer::from_gltf(&path)).unwrap();
+                let data = future::block_on(path.load_binary()).unwrap();
+                let scene = SceneBuffer::from_gltf(data).unwrap();
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Scene(scene, Some(filename))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(scene, Some(filename))))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path.as_str(), timestamp.elapsed().as_secs_f32());
             });
         }
 
         #[cfg(target_family = "wasm")]
-        self.worker_pool.submit(LoadTask {
-            kind: AssetKind::Model,
-            path,
-        });
+        {
+            match path {
+                ResourcePath::File(_) | ResourcePath::Url(_) => {
+                    self.worker_pool.submit(LoadTask {
+                        kind: AssetKind::Gltf,
+                        path: path.as_serializable().unwrap(),
+                    });
+                },
+                ResourcePath::Upload(_) => {
+                    self.worker_pool.submit(UploadTask {
+                        kind: AssetKind::Gltf,
+                        path,
+                    });
+                }
+            };
+        }
     }
 
     fn load_pointcloud(&self, path: ResourcePath) {
@@ -199,28 +393,40 @@ impl AssetLoader {
         {
             let sender = self.render_tx.clone();
             let timestamp = Instant::now();
-            let filename = path.filename().to_string();
+            let filename = path.file_name().to_string();
 
             std::thread::spawn(move || {
                 let data = future::block_on(path.load_binary()).unwrap();
                 let pointcloud = PointcloudBuffer::from_las(data).unwrap();
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Pointcloud(pointcloud, Some(filename))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Pointcloud(pointcloud, Some(filename))))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path, timestamp.elapsed().as_secs_f32());
             });
         }
 
-        // #[cfg(target_family = "wasm")]
-        // self.worker_pool.submit(UploadTask {
-        //     kind: AssetKind::Pointcloud,
-        //     file,
-        // });
+        #[cfg(target_family = "wasm")]
+        {
+            match path {
+                ResourcePath::File(_) | ResourcePath::Url(_) => {
+                    self.worker_pool.submit(LoadTask {
+                        kind: AssetKind::Pointcloud,
+                        path: path.as_serializable().unwrap(),
+                    });
+                },
+                ResourcePath::Upload(_) => {
+                    self.worker_pool.submit(UploadTask {
+                        kind: AssetKind::Pointcloud,
+                        path,
+                    });
+                }
+            };
+        }
     }
 }
 
 #[cfg(target_family = "wasm")]
-fn format_url(filename: &str) -> String {
+fn format_url(filename: &str) -> reqwest::Url {
     let window = web_sys::window().unwrap();
     let location = window.location();
     let mut origin = location.origin().unwrap();
@@ -229,5 +435,5 @@ fn format_url(filename: &str) -> String {
     }
 
     let base = reqwest::Url::parse(&format!("{}/", origin)).unwrap();
-    base.join(filename).unwrap().to_string()
+    base.join(filename).unwrap()
 }

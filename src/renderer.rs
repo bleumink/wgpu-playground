@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crossbeam::channel::{Receiver, Sender};
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::State as EguiState;
+use gltf::json::extensions::scene;
 use uuid::Uuid;
 use wgpu::util::DeviceExt;
 
@@ -13,7 +14,7 @@ use wgpu::util::DeviceExt;
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    asset::Asset,
+    asset::AssetBuffer,
     context::RenderContext,
     mesh::{MeshVertex, Scene, TextureCoordinate},
     pointcloud::{PointVertex, Pointcloud},
@@ -145,7 +146,7 @@ pub enum RenderCommand {
         view_projection_matrix: glam::Mat4,
     },
     Resize(wgpu::SurfaceConfiguration),
-    LoadAsset(Asset),
+    LoadAsset(AssetBuffer),
     SpawnAsset {
         entity_id: EntityId,
         render_id: RenderId,
@@ -388,13 +389,15 @@ impl Renderer {
         &self.context.device
     }
 
-    fn load_asset(&mut self, asset: Asset) -> anyhow::Result<()> {
+    fn load_asset(&mut self, asset: AssetBuffer) -> anyhow::Result<()> {
         match asset {
-            Asset::Scene(buffer, label) => {
+            AssetBuffer::Scene(buffer, label) => {                
                 let scene = Scene::from_buffer(buffer, &self.context, label.clone());
+                let material_id = self.scene.add_materials(scene.materials);
+                
                 for node in scene.nodes {
                     let render_id = self.scene.add_group(
-                        RenderKind::Mesh(node.mesh, scene.materials.clone()),
+                        RenderKind::Mesh(node.mesh, material_id.clone()),
                         self.render_pipeline.clone(),
                         &self.context,
                     );
@@ -406,7 +409,7 @@ impl Renderer {
                     })?;
                 }
             }
-            Asset::Pointcloud(buffer, label) => {
+            AssetBuffer::Pointcloud(buffer, label) => {
                 let pointcloud = Pointcloud::from_buffer(buffer, &self.context, label.clone());
                 let render_id = self.scene.add_group(
                     RenderKind::Pointcloud(pointcloud),

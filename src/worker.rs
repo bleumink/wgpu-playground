@@ -13,9 +13,11 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::DedicatedWorkerGlobalScope;
 
-use crate::asset::Asset;
+use crate::asset::AssetBuffer;
+use crate::asset::AssetKind;
 use crate::asset::ResourcePath;
-use crate::model::ModelBuffer;
+use crate::asset::SerializableResourcePath;
+use crate::mesh::SceneBuffer;
 use crate::pointcloud::PointcloudBuffer;
 use crate::renderer::RenderCommand;
 
@@ -84,7 +86,7 @@ impl WorkerRuntime {
     }
 }
 
-pub trait WorkerTask {
+pub trait WorkerTask: 'static {
     const HANDLE: &'static str;
 
     fn from_message(payload: JsValue) -> Self;
@@ -120,39 +122,10 @@ impl<T: WorkerTask> AnyTask for T {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub enum AssetKind {
-    Model,
-    Pointcloud,
-}
-
-impl AssetKind {
-    fn to_str(&self) -> &str {
-        match self {
-            AssetKind::Model => "model",
-            AssetKind::Pointcloud => "pointcloud",
-        }
-    }
-
-    fn from_str(kind: &str) -> Option<AssetKind> {
-        match kind {
-            "model" => Some(AssetKind::Model),
-            "pointcloud" => Some(AssetKind::Pointcloud),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for AssetKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_str())
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct LoadTask {
     pub kind: AssetKind,
-    pub path: ResourcePath,
+    pub path: SerializableResourcePath,
 }
 
 impl WorkerTask for LoadTask {
@@ -172,14 +145,22 @@ impl WorkerTask for LoadTask {
     }
 
     async fn run(self, scope: &DedicatedWorkerGlobalScope) {
+        let path: ResourcePath = self.path.into();
         let buffer = match self.kind {
-            AssetKind::Model => {
-                let model = ModelBuffer::from_obj(&self.path).await.unwrap();
-                let raw = model.buffer();
+            AssetKind::Obj => {
+                let scene = SceneBuffer::from_obj(&path).await.unwrap();
+                let raw = scene.buffer();
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
-            }
+            },
+            AssetKind::Gltf => {
+                let data = path.load_binary().await.unwrap();
+                let scene = SceneBuffer::from_gltf(data).unwrap();
+                let raw = scene.buffer();
+                js_sys::Uint8Array::new_from_slice(raw).buffer()
+
+            },
             AssetKind::Pointcloud => {
-                let data = self.path.load_binary().await.unwrap();
+                let data = path.load_binary().await.unwrap();
                 let pointcloud = PointcloudBuffer::from_las(data).unwrap();
                 let raw = bytemuck::cast_slice(pointcloud.points());
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
@@ -196,19 +177,20 @@ impl WorkerTask for LoadTask {
         let mut bytes = vec![0u8; array.length() as usize];
         array.copy_to(&mut bytes);
 
-        let filename = self.path.filename().to_string();
+        let path: ResourcePath = self.path.clone().into();
+        let filename = path.file_name().to_string();
         match self.kind {
-            AssetKind::Model => {
-                let model = ModelBuffer::from_bytes(&bytes);
+            AssetKind::Obj | AssetKind::Gltf => {
+                let scene = SceneBuffer::from_bytes(&bytes);
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Model(model, Some(filename.clone()))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(scene, Some(filename.clone()))))
                     .unwrap();
             }
             AssetKind::Pointcloud => {
                 let points = bytemuck::cast_slice(&bytes);
                 let pointcloud = PointcloudBuffer::new(points.to_vec());
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Pointcloud(
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Pointcloud(
                         pointcloud,
                         Some(filename.clone()),
                     )))
@@ -222,7 +204,7 @@ impl WorkerTask for LoadTask {
 
 pub struct UploadTask {
     pub kind: AssetKind,
-    pub file: web_sys::File,
+    pub path: ResourcePath,
 }
 
 impl WorkerTask for UploadTask {
@@ -236,13 +218,15 @@ impl WorkerTask for UploadTask {
         let kind = AssetKind::from_str(&kind_str).unwrap();
 
         let file: web_sys::File = js_sys::Reflect::get(&payload, &"file".into()).unwrap().unchecked_into();
+        let path = ResourcePath::Upload(file);
 
-        Self { file, kind }
+        Self { path, kind }
     }
 
     fn to_message(&self) -> JsValue {
+        let file = self.path.file().unwrap();
         let payload = js_object!({
-            "file": self.file.value_of(),
+            "file": file.value_of(),
             "kind": JsValue::from_str(self.kind.to_str()),
         });
 
@@ -254,19 +238,21 @@ impl WorkerTask for UploadTask {
         object.into()
     }
 
-    async fn run(self, scope: &DedicatedWorkerGlobalScope) {
-        let buffer = JsFuture::from(self.file.array_buffer()).await.unwrap();
-        let data = js_sys::Uint8Array::new(&buffer);
+    async fn run(self, scope: &DedicatedWorkerGlobalScope) {           
+        let bytes = self.path.load_binary().await.unwrap();
         let buffer = match self.kind {
-            AssetKind::Model => {
-                todo!();
-                // let model = ModelBuffer::from_obj(data).await.unwrap();
-                // model.buffer()
-            }
+            AssetKind::Obj => {                
+                // TODO This does not work for uploads
+                let scene = SceneBuffer::from_obj(&self.path).await.unwrap();
+                let raw = scene.buffer();
+                js_sys::Uint8Array::new_from_slice(raw).buffer()                
+            },
+            AssetKind::Gltf => {
+                let scene = SceneBuffer::from_gltf(bytes).unwrap();
+                let raw = scene.buffer();
+                js_sys::Uint8Array::new_from_slice(raw).buffer()                
+            },
             AssetKind::Pointcloud => {
-                let mut bytes = vec![0u8; data.length() as usize];
-                data.copy_to(&mut bytes);
-
                 let pointcloud = PointcloudBuffer::from_las(bytes).unwrap();
                 let raw = bytemuck::cast_slice(pointcloud.points());
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
@@ -279,30 +265,32 @@ impl WorkerTask for UploadTask {
     }
 
     fn on_complete(&self, result: JsValue, sender: Sender<RenderCommand>, duration: Duration) {
+        let file_name = self.path.file_name().to_string();
+        
         let array = js_sys::Uint8Array::new(&result);
         let mut bytes = vec![0u8; array.length() as usize];
         array.copy_to(&mut bytes);
 
         match self.kind {
-            AssetKind::Model => {
-                let model = ModelBuffer::from_bytes(&bytes);
+            AssetKind::Obj | AssetKind::Gltf => {
+                let model = SceneBuffer::from_bytes(&bytes);
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Model(model, Some(self.file.name()))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(model, Some(file_name.clone()))))
                     .unwrap();
-            }
+            },
             AssetKind::Pointcloud => {
                 let points = bytemuck::cast_slice(&bytes);
                 let pointcloud = PointcloudBuffer::new(points.to_vec());
                 sender
-                    .send(RenderCommand::LoadAsset(Asset::Pointcloud(
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Pointcloud(
                         pointcloud,
-                        Some(self.file.name()),
+                        Some(file_name.clone()),
                     )))
                     .unwrap();
             }
         }
 
-        log::info!("Loaded {} in {} s", self.file.name(), duration.as_secs_f32());
+        log::info!("Loaded {} in {} s", file_name, duration.as_secs_f32());
     }
 }
 

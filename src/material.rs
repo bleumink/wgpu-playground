@@ -178,8 +178,8 @@ pub struct Material {
 
 impl Material {
     pub fn from_gltf(material: &gltf::Material) -> Self {
-        let pbr = material.pbr_metallic_roughness();
-
+        let pbr = material.pbr_metallic_roughness();        
+        
         Self {
             base_color: TextureSlot::from_gltf(pbr.base_color_texture()),
             metallic_roughness: TextureSlot::from_gltf(pbr.metallic_roughness_texture()),
@@ -278,10 +278,10 @@ impl Default for TextureSlot {
 }
 
 impl TextureSlot {
-    pub fn from_gltf<T: GltfTextureInfo>(texture_info: Option<T>) -> Option<Self> {
+    pub fn from_gltf<T: GltfTextureInfo>(texture_info: Option<T>) -> Option<Self> {                
         texture_info.and_then(|texture_info| {
             let slot = Self {
-                texture_index: texture_info.texture().index() as u32,
+                texture_index: texture_info.texture().source().index() as u32,
                 uv_index: texture_info.tex_coord() as u32,
                 sampler_index: texture_info.texture().sampler().index().unwrap_or(0) as u32,
             };

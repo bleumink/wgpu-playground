@@ -13,10 +13,19 @@ use crate::{
 };
 
 pub enum RenderKind {
-    Mesh(Mesh, Vec<MaterialInstance>),
+    Mesh(Mesh, MaterialsId),
     Pointcloud(Pointcloud),
 }
 
+pub struct MaterialData {
+    scene_id: SceneId, 
+    materials: Vec<MaterialInstance>
+}
+
+pub type SceneId = Uuid;
+
+#[derive(Clone)]
+pub struct MaterialsId(SceneId, usize);
 pub struct EntityTransformData(EntityId, usize);
 
 pub struct RenderGroup {
@@ -113,6 +122,7 @@ impl RenderGroup {
 pub struct SceneGraph {
     pub groups: HashMap<RenderId, RenderGroup>,
     pub transform_buffer: TransformBuffer,
+    pub materials: Vec<MaterialData>,
 }
 
 impl SceneGraph {
@@ -120,11 +130,23 @@ impl SceneGraph {
         Self {
             groups: HashMap::new(),
             transform_buffer: TransformBuffer::new(64, context),
+            materials: Vec::new(),
         }
     }
 
     pub fn transform_layout(&self) -> &wgpu::BindGroupLayout {
         self.transform_buffer.layout()
+    }
+
+    pub fn add_materials(&mut self, materials: Vec<MaterialInstance>) -> MaterialsId {
+        let scene_id = Uuid::new_v4();
+        let index = self.materials.len();
+        self.materials.push(MaterialData { 
+            scene_id: scene_id.clone(), 
+            materials 
+        });
+        
+        MaterialsId(scene_id, index)
     }
 
     pub fn add_group(&mut self, kind: RenderKind, pipeline: wgpu::RenderPipeline, context: &RenderContext) -> RenderId {
@@ -150,7 +172,8 @@ impl SceneGraph {
 
     pub fn iter_meshes(&self) -> impl Iterator<Item = (&Mesh, &Vec<MaterialInstance>, &RenderGroup)> {
         self.groups.iter().filter_map(|(_, bucket)| {
-            if let RenderKind::Mesh(mesh, materials) = &bucket.kind {
+            if let RenderKind::Mesh(mesh, material_id) = &bucket.kind {
+                let materials = &self.materials[material_id.1].materials;
                 Some((mesh, materials, bucket))
             } else {
                 None

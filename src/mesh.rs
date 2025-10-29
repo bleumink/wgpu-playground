@@ -62,7 +62,6 @@ where
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshVertex {
     pub position: [f32; 3],
-    // pub tex_coords: [f32; 2],
     pub normal: [f32; 3],
 }
 
@@ -375,17 +374,16 @@ impl SceneBuffer {
         &self.0
     }
 
-    pub fn get_slice<T: Pod>(&self, offset: usize, count: usize) -> &[T] {
+    pub fn slice<T: Pod>(&self, offset: usize, count: usize) -> &[T] {
+        Self::slice_as(&self.0, offset, count)
+    }
+
+    pub fn slice_raw<T: Pod>(&self, offset: usize, count: usize) -> &[u8] {
         let end = offset + count * std::mem::size_of::<T>();
         bytemuck::cast_slice(&self.0[offset..end])
     }
 
-    pub fn get_raw_slice<T: Pod>(&self, offset: usize, count: usize) -> &[u8] {
-        let end = offset + count * std::mem::size_of::<T>();
-        bytemuck::cast_slice(&self.0[offset..end])
-    }
-
-    pub fn get_slice_of<T: Pod>(buffer: &[u8], offset: usize, count: usize) -> &[T] {
+    pub fn slice_as<T: Pod>(buffer: &[u8], offset: usize, count: usize) -> &[T] {
         let end = offset + count * std::mem::size_of::<T>();
         bytemuck::cast_slice(&buffer[offset..end])
     }
@@ -393,18 +391,18 @@ impl SceneBuffer {
     pub fn iter_nodes(&self) -> impl Iterator<Item = NodeView<'_>> {
         let scene_header: &SceneHeader = bytemuck::from_bytes(&self.0[..std::mem::size_of::<SceneHeader>()]);
 
-        let raw_primitive_headers = self.get_raw_slice::<PrimitiveHeader>(
+        let raw_primitive_headers = self.slice_raw::<PrimitiveHeader>(
             scene_header.primitive_header_offset,
             scene_header.primitive_header_count,
         );
-        let raw_vertices = self.get_raw_slice::<MeshVertex>(scene_header.vertices_offset, scene_header.vertices_count);
-        let raw_indices = self.get_raw_slice::<u32>(scene_header.indices_offset, scene_header.indices_count);
+        let raw_vertices = self.slice_raw::<MeshVertex>(scene_header.vertices_offset, scene_header.vertices_count);
+        let raw_indices = self.slice_raw::<u32>(scene_header.indices_offset, scene_header.indices_count);
         let raw_uv_headers =
-            self.get_raw_slice::<TexCoordHeader>(scene_header.uv_header_offset, scene_header.uv_header_count);
+            self.slice_raw::<TexCoordHeader>(scene_header.uv_header_offset, scene_header.uv_header_count);
         let raw_uv_sets =
-            self.get_raw_slice::<TextureCoordinate>(scene_header.uv_sets_offset, scene_header.uv_sets_count);
+            self.slice_raw::<TextureCoordinate>(scene_header.uv_sets_offset, scene_header.uv_sets_count);
 
-        self.get_slice::<NodeHeader>(scene_header.node_header_offset, scene_header.node_header_count)
+        self.slice::<NodeHeader>(scene_header.node_header_offset, scene_header.node_header_count)
             .iter()
             .map(|node_header| {
                 let transform = glam::Mat4::from_scale_rotation_translation(
@@ -413,7 +411,7 @@ impl SceneBuffer {
                     glam::Vec3::from_slice(&node_header.position),
                 );
 
-                let primitive_headers: &[PrimitiveHeader] = Self::get_slice_of(
+                let primitive_headers: &[PrimitiveHeader] = Self::slice_as(
                     raw_primitive_headers,
                     node_header.primitive_header_offset,
                     node_header.primitive_count,
@@ -421,17 +419,17 @@ impl SceneBuffer {
                 let primitives = primitive_headers
                     .iter()
                     .map(|primitive_header| {
-                        let vertices: &[MeshVertex] = Self::get_slice_of(
+                        let vertices: &[MeshVertex] = Self::slice_as(
                             raw_vertices,
                             primitive_header.vertex_offset,
                             primitive_header.vertex_count,
                         );
-                        let indices: &[u32] = Self::get_slice_of(
+                        let indices: &[u32] = Self::slice_as(
                             raw_indices,
                             primitive_header.index_offset,
                             primitive_header.index_count,
                         );
-                        let uv_headers: &[TexCoordHeader] = Self::get_slice_of(
+                        let uv_headers: &[TexCoordHeader] = Self::slice_as(
                             raw_uv_headers,
                             primitive_header.uv_header_offset,
                             primitive_header.uv_set_count,
@@ -454,11 +452,11 @@ impl SceneBuffer {
     pub fn iter_materials(&self) -> impl Iterator<Item = MaterialView<'_>> {
         let scene_header: &SceneHeader = bytemuck::from_bytes(&self.0[..std::mem::size_of::<SceneHeader>()]);
         let texture_headers: &[TextureHeader] =
-            self.get_slice(scene_header.texture_header_offset, scene_header.texture_header_count);
-        let materials: &[Material] = self.get_slice(scene_header.materials_offset, scene_header.materials_count);
-        let samplers: &[Sampler] = self.get_slice(scene_header.samplers_offset, scene_header.samplers_count);
-        let raw_textures = self.get_slice(scene_header.texture_offset, scene_header.texture_size);
-
+            self.slice(scene_header.texture_header_offset, scene_header.texture_header_count);
+        let materials: &[Material] = self.slice(scene_header.materials_offset, scene_header.materials_count);
+        let samplers: &[Sampler] = self.slice(scene_header.samplers_offset, scene_header.samplers_count);
+        let raw_textures = self.slice(scene_header.texture_offset, scene_header.texture_size);
+        
         let create_texture_view = |texture_slot: Option<TextureSlot>| {
             texture_slot.and_then(|slot| {
                 let header = texture_headers[slot.texture_index as usize];
@@ -495,8 +493,7 @@ impl SceneBuffer {
         })
     }
 
-    pub async fn from_gltf(path: &ResourcePath) -> anyhow::Result<Self> {
-        let data = path.load_binary().await?;
+    pub fn from_gltf(data: Vec<u8>) -> anyhow::Result<Self> {        
         let (gltf, buffers, images) = gltf::import_slice(data)?;
 
         let mut textures = Vec::new();
@@ -504,14 +501,14 @@ impl SceneBuffer {
         let mut samplers = Vec::new();
         let mut materials = Vec::new();
 
-        for material in gltf.materials() {
+        for material in gltf.materials() {                
             materials.push(Material::from_gltf(&material));
         }
 
         for sampler in gltf.samplers() {
             samplers.push(Sampler::from_gltf(&sampler));
         }
-
+        
         for image in images {
             let header = TextureHeader {
                 offset: textures.len(),
