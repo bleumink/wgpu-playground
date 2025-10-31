@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{io::Cursor, ops::Range};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -91,6 +91,7 @@ impl PointcloudBuffer {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Pointcloud {
     pub label: Option<String>,
     pub vertex_buffer: wgpu::Buffer,
@@ -117,12 +118,12 @@ impl Pointcloud {
 }
 
 pub trait DrawPointcloud<'a> {
-    fn draw_pointcloud(&mut self, pointcloud: &'a Pointcloud);
+    fn draw_pointcloud(&mut self, pointcloud: &'a Pointcloud, instances: Range<u32>);
 }
 
 impl<'a, 'b> DrawPointcloud<'b> for wgpu::RenderPass<'a> {
-    fn draw_pointcloud(&mut self, pointcloud: &'b Pointcloud) {
+    fn draw_pointcloud(&mut self, pointcloud: &'b Pointcloud, instances: Range<u32>) {
         self.set_vertex_buffer(0, pointcloud.vertex_buffer.slice(..));
-        self.draw(0..pointcloud.num_points, 0..1);
+        self.draw(0..pointcloud.num_points, instances);
     }
 }

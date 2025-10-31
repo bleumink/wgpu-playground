@@ -46,9 +46,9 @@ impl ResourcePath {
     pub fn new(path: &str) -> anyhow::Result<Self> {
         #[cfg(not(target_family = "wasm"))]
         return Ok(ResourcePath::File(Path::new(path).to_path_buf()));
-        
+
         #[cfg(target_family = "wasm")]
-        return Ok(ResourcePath::Url(format_url(path)));        
+        return Ok(ResourcePath::Url(format_url(path)));
     }
 
     #[cfg(target_family = "wasm")]
@@ -86,7 +86,7 @@ impl ResourcePath {
         match self {
             Self::File(path) => match path.to_str() {
                 Some(value) => Cow::Borrowed(value),
-                None => Cow::Owned(path.display().to_string())
+                None => Cow::Owned(path.display().to_string()),
             },
             Self::Url(url) => Cow::Borrowed(url.as_str()),
             #[cfg(target_family = "wasm")]
@@ -96,53 +96,57 @@ impl ResourcePath {
 
     pub fn file_name(&self) -> Cow<'_, str> {
         match self {
-            Self::File(path) => {
-                path.file_name().and_then(|os_str| os_str.to_str())
+            Self::File(path) => path
+                .file_name()
+                .and_then(|os_str| os_str.to_str())
                 .map(Cow::Borrowed)
-                .unwrap_or_else(|| {
-                    Cow::Owned(path.display().to_string())
-                })
-            },
-            Self::Url(url) => {            
+                .unwrap_or_else(|| Cow::Owned(path.display().to_string())),
+            Self::Url(url) => {
                 let path = url.path();
-                Path::new(path).file_name().and_then(|os_str| os_str.to_str())
+                Path::new(path)
+                    .file_name()
+                    .and_then(|os_str| os_str.to_str())
                     .map(Cow::Borrowed)
-                    .unwrap_or_else(|| {
-                        Cow::Owned(String::new())
-                    })                                
-            },
+                    .unwrap_or_else(|| Cow::Owned(String::new()))
+            }
             #[cfg(target_family = "wasm")]
-            Self::Upload(file) => {
-                Cow::Owned(file.name())
-            },
+            Self::Upload(file) => Cow::Owned(file.name()),
         }
     }
 
     pub fn extension(&self) -> Option<Cow<'_, str>> {
         match self {
-            Self::File(path) => path.extension().and_then(|extension| extension.to_str()).map(Cow::Borrowed),
-            Self::Url(url) => Path::new(url.path()).extension().and_then(|extension| extension.to_str()).map(Cow::Borrowed),
+            Self::File(path) => path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(Cow::Borrowed),
+            Self::Url(url) => Path::new(url.path())
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(Cow::Borrowed),
             #[cfg(target_family = "wasm")]
-            Self::Upload(file) => {        
+            Self::Upload(file) => {
                 let name = file.name();
                 Path::new(&name)
                     .extension()
                     .and_then(|extension| extension.to_str())
                     .map(|extension| Cow::Owned(extension.to_string()))
-            },
-        }        
+            }
+        }
     }
 
     pub fn create_relative(&self, name: &str) -> Self {
         match self {
             Self::File(path) => {
-                let new_path = path.parent().map(|parent| parent.join(name))
-                .unwrap_or_else(|| std::path::PathBuf::from(name));
+                let new_path = path
+                    .parent()
+                    .map(|parent| parent.join(name))
+                    .unwrap_or_else(|| std::path::PathBuf::from(name));
                 Self::File(new_path)
-            },
+            }
             Self::Url(url) => {
                 let mut new_url = url.clone();
-                {   
+                {
                     let mut segments = new_url.path_segments_mut().expect("base URL cannot be base");
                     segments.pop_if_empty();
                     segments.pop();
@@ -150,13 +154,11 @@ impl ResourcePath {
                 }
 
                 Self::Url(new_url)
-            },
+            }
             #[cfg(target_family = "wasm")]
             Self::Upload(file) => {
                 let parent = file.name();
-                let base = Path::new(&parent)
-                    .parent()
-                    .unwrap_or_else(|| Path::new(""));
+                let base = Path::new(&parent).parent().unwrap_or_else(|| Path::new(""));
                 let new_name = base.join(name).display().to_string();
                 Self::Url(reqwest::Url::parse(&format!("file:///{}", new_name)).unwrap())
             }
@@ -169,10 +171,10 @@ impl ResourcePath {
                 let path_buf = std::path::Path::new(env!("OUT_DIR")).join("res").join(path);
                 std::fs::read_to_string(path_buf)?
             }
-            Self::Url(url) => {                
+            Self::Url(url) => {
                 let response = reqwest::get(url.as_str()).await?;
                 response.text().await?
-            },
+            }
             #[cfg(target_family = "wasm")]
             Self::Upload(_) => {
                 let bytes = self.load_binary().await?;
@@ -183,7 +185,7 @@ impl ResourcePath {
         Ok(text)
     }
 
-    pub async fn load_binary(&self) -> anyhow::Result<Vec<u8>> {        
+    pub async fn load_binary(&self) -> anyhow::Result<Vec<u8>> {
         let data = match self {
             Self::File(path) => {
                 let path_buf = std::path::Path::new(env!("OUT_DIR")).join("res").join(path);
@@ -192,7 +194,7 @@ impl ResourcePath {
             Self::Url(url) => {
                 let response = reqwest::get(url.as_str()).await?;
                 response.bytes().await?.to_vec()
-            },
+            }
             #[cfg(target_family = "wasm")]
             Self::Upload(file) => {
                 use wasm_bindgen_futures::JsFuture;
@@ -206,7 +208,7 @@ impl ResourcePath {
             }
         };
 
-        Ok(data)        
+        Ok(data)
     }
 }
 
@@ -306,7 +308,7 @@ impl AssetLoader {
             } else {
                 log::error!("Unsupported resource");
             }
-        }        
+        }
     }
 
     fn load_kind(&self, kind: AssetKind, path: ResourcePath) {
@@ -341,7 +343,7 @@ impl AssetLoader {
                         kind: AssetKind::Obj,
                         path: path.as_serializable().unwrap(),
                     });
-                },
+                }
                 ResourcePath::Upload(_) => {
                     self.worker_pool.submit(UploadTask {
                         kind: AssetKind::Obj,
@@ -377,7 +379,7 @@ impl AssetLoader {
                         kind: AssetKind::Gltf,
                         path: path.as_serializable().unwrap(),
                     });
-                },
+                }
                 ResourcePath::Upload(_) => {
                     self.worker_pool.submit(UploadTask {
                         kind: AssetKind::Gltf,
@@ -399,7 +401,10 @@ impl AssetLoader {
                 let data = future::block_on(path.load_binary()).unwrap();
                 let pointcloud = PointcloudBuffer::from_las(data).unwrap();
                 sender
-                    .send(RenderCommand::LoadAsset(AssetBuffer::Pointcloud(pointcloud, Some(filename))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Pointcloud(
+                        pointcloud,
+                        Some(filename),
+                    )))
                     .unwrap();
                 log::info!("Loaded {} in {} s", path, timestamp.elapsed().as_secs_f32());
             });
@@ -413,7 +418,7 @@ impl AssetLoader {
                         kind: AssetKind::Pointcloud,
                         path: path.as_serializable().unwrap(),
                     });
-                },
+                }
                 ResourcePath::Upload(_) => {
                     self.worker_pool.submit(UploadTask {
                         kind: AssetKind::Pointcloud,

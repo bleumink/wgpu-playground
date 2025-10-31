@@ -11,52 +11,17 @@ use crate::renderer::Renderer;
 use crate::{
     asset::{AssetLoader, ResourcePath},
     camera::{Camera, CameraController, Projection},
+    entity::{Entity, EntityId},
     instance::Instance,
+    light::Light,
     renderer::{RenderCommand, RenderEvent, RenderId},
     surface::{Surface, SurfaceState},
     ui::Ui,
 };
 
-pub type EntityId = Uuid;
-
 const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
     1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ]);
-
-#[derive(Debug)]
-pub struct Entity {
-    position: glam::Vec3,
-    rotation: glam::Quat,
-    scale: glam::Vec3,
-    render_id: RenderId,
-    label: Option<String>,
-}
-
-impl Entity {
-    pub fn new_id() -> EntityId {
-        Uuid::new_v4()
-    }
-
-    pub fn new(
-        render_id: RenderId,
-        position: glam::Vec3,
-        rotation: glam::Quat,
-        scale: glam::Vec3,
-        label: Option<String>,
-    ) -> Self {
-        Self {
-            position,
-            rotation,
-            scale,
-            render_id,
-            label,
-        }
-    }
-
-    pub fn to_transform(&self) -> glam::Mat4 {
-        glam::Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
-    }
-}
 
 pub struct State {
     window: Arc<Window>,
@@ -89,10 +54,28 @@ impl State {
         let camera_controller = CameraController::new(8.0, 0.004);
         let loader = AssetLoader::new(render_sender.clone());
         let ui = Ui::new(Arc::clone(&window), loader.clone());
-        let entities = HashMap::new();
+        let mut entities = HashMap::new();
 
         loader.load(ResourcePath::new("cube.obj").unwrap());
         // loader.load(ResourcePath::new("1612_9070.laz"));
+
+        let light = Light::Point {
+            position: glam::Vec3 {
+                x: 2.0,
+                y: -3.0,
+                z: 2.0,
+            },
+            color: glam::Vec3 { x: 1.0, y: 1.0, z: 1.0 },
+            intensity: 1.0,
+        };
+
+        let transform = light.to_transform();
+        let entity = Entity::new(transform, Some("light".to_string()));
+        render_sender.send(RenderCommand::SpawnLight {
+            entity_id: entity.id(),
+            light,
+        })?;
+        entities.insert(entity.id(), entity);
 
         Ok(Self {
             window,
@@ -115,6 +98,21 @@ impl State {
     #[cfg(not(target_family = "wasm"))]
     pub fn update(&mut self, event_loop: &ActiveEventLoop) {
         self.window.request_redraw();
+
+        let light = self
+            .entities
+            .values()
+            .find(|entity| entity.label().as_ref().unwrap() == "light")
+            .unwrap();
+        let position = light.transform().w_axis.truncate();
+        let rotation = glam::Quat::from_rotation_y(1.0_f32.to_radians());
+        let new_position = rotation * position;
+        let translation = new_position - position;
+
+        // self.render_tx.send(RenderCommand::Translate {
+        //     entity_id: light.id(),
+        //     translation,
+        // });
 
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
@@ -157,14 +155,8 @@ impl State {
                             .collect::<Vec<_>>();
 
                         for instance in instances {
-                            let entity_id = Entity::new_id();
-                            let entity = Entity::new(
-                                render_id,
-                                instance.position,
-                                instance.rotation,
-                                glam::Vec3::ONE,
-                                label.clone(),
-                            );
+                            let transform = glam::Mat4::from_rotation_translation(instance.rotation, instance.position);
+                            let entity = Entity::new(transform, label.clone());
 
                             let translation = glam::Vec3 {
                                 x: 0.0,
@@ -173,28 +165,26 @@ impl State {
                             };
                             self.render_tx
                                 .send(RenderCommand::SpawnAsset {
-                                    entity_id,
+                                    entity_id: entity.id(),
                                     render_id,
-                                    transform: glam::Mat4::from_translation(translation) * entity.to_transform(),
+                                    transform: glam::Mat4::from_translation(translation) * entity.transform(),
                                 })
                                 .unwrap();
-                            self.entities.insert(entity_id, entity);
+                            self.entities.insert(entity.id(), entity);
                         }
                     } else {
                         let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
-                        let (scale, rotation, position) = transform.to_scale_rotation_translation();
-
-                        let entity_id = Entity::new_id();
-                        let entity = Entity::new(render_id, position, rotation, scale, label);
+                        // let (scale, rotation, position) = transform.to_scale_rotation_translation();
+                        let entity = Entity::new(transform, label);
 
                         self.render_tx
                             .send(RenderCommand::SpawnAsset {
-                                entity_id,
+                                entity_id: entity.id(),
                                 render_id,
                                 transform,
                             })
                             .unwrap();
-                        self.entities.insert(entity_id, entity);
+                        self.entities.insert(entity.id(), entity);
                     }
                 }
                 RenderEvent::Stopped => {
@@ -386,7 +376,7 @@ impl State {
     }
 
     pub fn exit(&mut self) {
-        self.is_running = false;        
+        self.is_running = false;
     }
 
     pub fn window(&self) -> &Arc<Window> {

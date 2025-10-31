@@ -151,14 +151,13 @@ impl WorkerTask for LoadTask {
                 let scene = SceneBuffer::from_obj(&path).await.unwrap();
                 let raw = scene.buffer();
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
-            },
+            }
             AssetKind::Gltf => {
                 let data = path.load_binary().await.unwrap();
                 let scene = SceneBuffer::from_gltf(data).unwrap();
                 let raw = scene.buffer();
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
-
-            },
+            }
             AssetKind::Pointcloud => {
                 let data = path.load_binary().await.unwrap();
                 let pointcloud = PointcloudBuffer::from_las(data).unwrap();
@@ -183,7 +182,10 @@ impl WorkerTask for LoadTask {
             AssetKind::Obj | AssetKind::Gltf => {
                 let scene = SceneBuffer::from_bytes(&bytes);
                 sender
-                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(scene, Some(filename.clone()))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(
+                        scene,
+                        Some(filename.clone()),
+                    )))
                     .unwrap();
             }
             AssetKind::Pointcloud => {
@@ -238,20 +240,20 @@ impl WorkerTask for UploadTask {
         object.into()
     }
 
-    async fn run(self, scope: &DedicatedWorkerGlobalScope) {           
+    async fn run(self, scope: &DedicatedWorkerGlobalScope) {
         let bytes = self.path.load_binary().await.unwrap();
         let buffer = match self.kind {
-            AssetKind::Obj => {                
+            AssetKind::Obj => {
                 // TODO This does not work for uploads
                 let scene = SceneBuffer::from_obj(&self.path).await.unwrap();
                 let raw = scene.buffer();
-                js_sys::Uint8Array::new_from_slice(raw).buffer()                
-            },
+                js_sys::Uint8Array::new_from_slice(raw).buffer()
+            }
             AssetKind::Gltf => {
                 let scene = SceneBuffer::from_gltf(bytes).unwrap();
                 let raw = scene.buffer();
-                js_sys::Uint8Array::new_from_slice(raw).buffer()                
-            },
+                js_sys::Uint8Array::new_from_slice(raw).buffer()
+            }
             AssetKind::Pointcloud => {
                 let pointcloud = PointcloudBuffer::from_las(bytes).unwrap();
                 let raw = bytemuck::cast_slice(pointcloud.points());
@@ -266,7 +268,7 @@ impl WorkerTask for UploadTask {
 
     fn on_complete(&self, result: JsValue, sender: Sender<RenderCommand>, duration: Duration) {
         let file_name = self.path.file_name().to_string();
-        
+
         let array = js_sys::Uint8Array::new(&result);
         let mut bytes = vec![0u8; array.length() as usize];
         array.copy_to(&mut bytes);
@@ -275,9 +277,12 @@ impl WorkerTask for UploadTask {
             AssetKind::Obj | AssetKind::Gltf => {
                 let model = SceneBuffer::from_bytes(&bytes);
                 sender
-                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(model, Some(file_name.clone()))))
+                    .send(RenderCommand::LoadAsset(AssetBuffer::Scene(
+                        model,
+                        Some(file_name.clone()),
+                    )))
                     .unwrap();
-            },
+            }
             AssetKind::Pointcloud => {
                 let points = bytemuck::cast_slice(&bytes);
                 let pointcloud = PointcloudBuffer::new(points.to_vec());

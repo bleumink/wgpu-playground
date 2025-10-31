@@ -18,6 +18,7 @@ pub struct TransformBuffer {
     transforms: Vec<TransformUniform>,
     capacity: usize,
     buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
 }
 
@@ -27,37 +28,27 @@ impl TransformBuffer {
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Transform bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                    count: None,
+                }],
             });
 
         let buffer = Self::create_buffer(capacity, context);
+        let bind_group = Self::create_bind_group(&buffer, &layout, context);
         let transforms = Vec::new();
 
         Self {
             transforms,
             capacity,
             buffer,
+            bind_group,
             layout,
         }
     }
@@ -68,6 +59,21 @@ impl TransformBuffer {
             size: (capacity * std::mem::size_of::<TransformUniform>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        })
+    }
+
+    fn create_bind_group(
+        buffer: &wgpu::Buffer,
+        layout: &wgpu::BindGroupLayout,
+        context: &RenderContext,
+    ) -> wgpu::BindGroup {
+        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Light bind group"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
         })
     }
 
@@ -90,6 +96,7 @@ impl TransformBuffer {
         if self.transforms.len() >= self.capacity {
             self.capacity *= 2;
             self.buffer = Self::create_buffer(self.capacity, context);
+            self.bind_group = Self::create_bind_group(&self.buffer, &self.layout, context);
 
             context
                 .queue
@@ -102,6 +109,10 @@ impl TransformBuffer {
 
     pub fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
+    }
+
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
     }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {

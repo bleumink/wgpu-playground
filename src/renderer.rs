@@ -1,6 +1,6 @@
 #[cfg(target_family = "wasm")]
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 use std::sync::Arc;
 
 use crossbeam::channel::{Receiver, Sender};
@@ -8,23 +8,13 @@ use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::State as EguiState;
 use gltf::json::extensions::scene;
 use uuid::Uuid;
-use wgpu::util::DeviceExt;
+use wgpu::{Instance, util::DeviceExt};
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    asset::AssetBuffer,
-    context::RenderContext,
-    mesh::{MeshVertex, Scene, TextureCoordinate},
-    pointcloud::{PointVertex, Pointcloud},
-    scene::{DrawScene, RenderKind, SceneGraph},
-    state::EntityId,
-    surface::Surface,
-    texture::Texture,
-    transform::TransformBuffer,
-    ui::UiData,
-    vertex::{Vertex, VertexLayoutBuilder},
+    asset::AssetBuffer, context::RenderContext, entity::EntityId, instance::RawInstance, light::Light, mesh::{Mesh, MeshVertex, Scene, TextureCoordinate}, pointcloud::{PointVertex, Pointcloud}, scene::{DrawScene, RenderKind, SceneGraph}, surface::Surface, texture::Texture, transform::TransformBuffer, ui::UiData, vertex::{Vertex, VertexLayoutBuilder}
 };
 
 // pub const MAT_SWAP_YZ: [[f32; 4]; 4] = [
@@ -41,10 +31,10 @@ const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
 pub type RenderId = Uuid;
 
 struct Camera {
-    pub uniform: CameraUniform,
-    pub buffer: wgpu::Buffer,
-    pub layout: wgpu::BindGroupLayout,
-    pub bind_group: wgpu::BindGroup,
+    uniform: CameraUniform,
+    buffer: wgpu::Buffer,
+    layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
 }
 
 impl Camera {
@@ -93,6 +83,10 @@ impl Camera {
         context
             .queue
             .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
+    }
+
+    pub fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
     }
 }
 
@@ -152,8 +146,12 @@ pub enum RenderCommand {
         render_id: RenderId,
         transform: glam::Mat4,
     },
+    SpawnLight {
+        entity_id: EntityId,
+        light: Light,
+    },
     Translate {
-        uuid: Uuid,
+        entity_id: EntityId,
         translation: glam::Vec3,
     },
     Stop,
@@ -174,72 +172,28 @@ pub enum RenderEvent {
     Stopped,
 }
 
-// pub trait RenderLike {
-//     fn send(&self, command: RenderCommand);
-//     fn draw_frame(&self);
-//     fn on_event(func: fn(RenderEvent));
-// }
+pub struct PipelineCache(HashMap<&'static str, wgpu::RenderPipeline>);
+impl PipelineCache {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
 
-// impl RenderLike for NewRenderer {
-//     fn draw_frame(&self) {
+    pub fn insert(&mut self, id: &'static str, pipeline: wgpu::RenderPipeline) {        
+        self.0.insert(id, pipeline);        
+    }
 
-//     }
-
-//     fn on_event(func: fn(RenderEvent)) {
-
-//     }
-
-//     fn send(&self, command: RenderCommand) {
-
-//     }
-// }
-
-// pub struct NewRenderer {
-//     surface: Surface,
-//     command_tx: Sender<RenderCommand>,
-//     event_tx: Sender<RenderEvent>,
-//     event_rx: Option<Receiver<RenderEvent>>,
-// }
-
-// impl NewRenderer {
-//     pub fn new(window: Arc<winit::window::Window>) -> anyhow::Result<Self> {
-//         use futures_lite::future;
-
-//         let (command_tx, command_rx) = crossbeam::channel::unbounded();
-//         let (event_tx, event_rx) = crossbeam::channel::unbounded();
-
-//         let (surface, context) = future::block_on(Surface::initialize(Arc::clone(&window)))?;
-//         let mut renderer = future::block_on(Renderer::new(context, command_rx, event_tx.clone()))?;
-
-//         let new_renderer = Self {
-//             surface,
-//             command_tx,
-//             event_tx,
-//             event_rx: Some(event_rx),
-//         };
-
-//         std::thread::spawn(move || {
-//             if let Err(error) = renderer.run() {
-//                 log::error!("Renderer encountered an error: {}", error);
-//             }
-//         });
-
-//         Ok(new_renderer)
-//     }
-
-//     pub fn take_receiver(&mut self) -> Option<Receiver<RenderEvent>> {
-//         self.event_rx.take()
-//     }
-// }
+    pub fn get(&self, id: &str) -> Option<&wgpu::RenderPipeline> {
+        self.0.get(id)
+    }
+}
 
 pub struct Renderer {
     is_running: bool,
     context: RenderContext,
     camera: Camera,
     scene: SceneGraph,
+    pipeline_cache: PipelineCache,    
     egui_renderer: EguiRenderer,
-    render_pipeline: wgpu::RenderPipeline,
-    pointcloud_pipeline: wgpu::RenderPipeline,
     render_rx: Receiver<RenderCommand>,
     result_tx: Sender<RenderEvent>,
 }
@@ -253,6 +207,7 @@ impl Renderer {
         let camera = Camera::new(&context);
         let egui_renderer = EguiRenderer::new(&context.device, context.config.format.add_srgb_suffix(), None, 1, true);
         let scene = SceneGraph::new(&context);
+        let mut pipeline_cache = PipelineCache::new();
 
         let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -264,13 +219,14 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("../res/pc_shader.wgsl").into()),
         });
 
+        let light_shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Light shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../res/light.wgsl").into()),
+        });
+
         let render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render pipeline layout"),
-            bind_group_layouts: &[
-                &context.texture_bind_group_layout,
-                &camera.layout,
-                scene.transform_layout(),
-            ],
+            bind_group_layouts: &[&context.texture_bind_group_layout, camera.layout(), scene.layout()],
             push_constant_ranges: &[],
         });
 
@@ -326,12 +282,11 @@ impl Renderer {
 
         let pointcloud_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Pointcloud pipeline layout"),
-            bind_group_layouts: &[&camera.layout, scene.transform_layout()],
+            bind_group_layouts: &[&context.texture_bind_group_layout, &camera.layout, scene.layout()],
             push_constant_ranges: &[],
         });
 
         let pointcloud_vertex_layout = VertexLayoutBuilder::new().push::<PointVertex>().build();
-
         let pointcloud_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Pointcloud pipeline"),
             layout: Some(&pointcloud_pipeline_layout),
@@ -372,14 +327,67 @@ impl Renderer {
             cache: None,
         });
 
+        let light_debug_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Debug light pipeline layout"),
+            bind_group_layouts: &[&context.texture_bind_group_layout, &camera.layout, scene.layout()],
+            push_constant_ranges: &[],
+        });
+
+        let light_debug_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Light debug pipeline"),
+            layout: Some(&light_debug_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &light_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &mesh_vertex_layout,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &light_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: context.config.format.add_srgb_suffix(),
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        pipeline_cache.insert("mesh", render_pipeline);
+        pipeline_cache.insert("pointcloud", pointcloud_pipeline);
+        pipeline_cache.insert("light", light_debug_pipeline);
+
         Ok(Self {
             is_running: true,
             context,
             camera,
             scene,
+            pipeline_cache,
             egui_renderer,
-            render_pipeline,
-            pointcloud_pipeline,
             render_rx: render_receiver,
             result_tx: error_sender,
         })
@@ -391,15 +399,15 @@ impl Renderer {
 
     fn load_asset(&mut self, asset: AssetBuffer) -> anyhow::Result<()> {
         match asset {
-            AssetBuffer::Scene(buffer, label) => {                
+            AssetBuffer::Scene(buffer, label) => {
                 let scene = Scene::from_buffer(buffer, &self.context, label.clone());
                 let material_id = self.scene.add_materials(scene.materials);
-                
-                for node in scene.nodes {
+
+                for node in scene.nodes {                    
+                    let pipeline = self.pipeline_cache.get("mesh").unwrap();
                     let render_id = self.scene.add_group(
                         RenderKind::Mesh(node.mesh, material_id.clone()),
-                        self.render_pipeline.clone(),
-                        &self.context,
+                        pipeline.clone(),
                     );
 
                     self.result_tx.send(RenderEvent::LoadComplete {
@@ -411,11 +419,11 @@ impl Renderer {
             }
             AssetBuffer::Pointcloud(buffer, label) => {
                 let pointcloud = Pointcloud::from_buffer(buffer, &self.context, label.clone());
-                let render_id = self.scene.add_group(
-                    RenderKind::Pointcloud(pointcloud),
-                    self.pointcloud_pipeline.clone(),
-                    &self.context,
-                );
+                let pipeline = self.pipeline_cache.get("pointcloud").unwrap();
+
+                let render_id = self
+                    .scene
+                    .add_group(RenderKind::Pointcloud(pointcloud), pipeline.clone());
 
                 self.result_tx.send(RenderEvent::LoadComplete {
                     render_id,
@@ -429,7 +437,12 @@ impl Renderer {
     }
 
     fn spawn_asset(&mut self, entity_id: EntityId, render_id: RenderId, transform: glam::Mat4) {
-        self.scene.add_entity(render_id, entity_id, transform, &self.context);
+        self.scene
+            .add_renderable(entity_id, render_id, transform, &self.context);
+    }
+
+    fn spawn_light(&mut self, entity_id: EntityId, light: Light) {
+        self.scene.add_light(entity_id, light, &self.context);
     }
 
     pub fn render_scene(&mut self, frame: &mut Frame) {
@@ -461,7 +474,8 @@ impl Renderer {
             timestamp_writes: None,
         });
 
-        render_pass.draw_scene(&self.scene, &self.camera.bind_group);
+        self.scene.sync(&self.context);    
+        render_pass.draw_scene(&self.scene, &self.camera.bind_group, &self.pipeline_cache);
     }
 
     pub fn render_ui(&mut self, ui: UiData, frame: &mut Frame) {
@@ -535,6 +549,7 @@ impl Renderer {
                 render_id,
                 transform,
             } => self.spawn_asset(entity_id, render_id, transform),
+            RenderCommand::SpawnLight { entity_id, light } => self.spawn_light(entity_id, light),
             RenderCommand::Resize(config) => {
                 self.context.pending_resize = Some(config.clone());
                 self.result_tx.send(RenderEvent::ResizeComplete {
@@ -542,7 +557,7 @@ impl Renderer {
                     device: self.context.device.clone(),
                 })?;
             }
-            RenderCommand::Translate { uuid, translation } => (),
+            RenderCommand::Translate { entity_id, translation } => {}
             RenderCommand::Stop => {
                 self.is_running = false;
             }

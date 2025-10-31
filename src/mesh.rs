@@ -170,9 +170,52 @@ impl Node {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Mesh {
     pub primitives: Vec<Primitive>,
+}
+
+impl Mesh {
+    pub fn unit_cube(context: &RenderContext) -> Self {
+        let (vertices, indices, uv_set) = unit_cube();
+
+        let vertex_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Unit cube vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Unit cube indices"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let dummy_uv_set = [TextureCoordinate::default()];
+        let uv_sets = vec![uv_set.as_slice()];
+        let uv_buffers = (0..6)
+            .map(|uv_index| {
+                let uv = uv_sets.get(uv_index).copied().unwrap_or(dummy_uv_set.as_slice());
+                context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Unit cube UV set"),
+                    contents: bytemuck::cast_slice(&uv),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let primitive = Primitive {
+            vertex_buffer,
+            index_buffer,
+            uv_buffers,
+            num_elements: indices.len() as u32,
+            material_index: 0,
+        };
+
+        Self {
+            primitives: vec![primitive],
+        }
+    }
 }
 
 #[repr(C)]
@@ -239,7 +282,7 @@ pub struct TextureHeader {
     pub height: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Primitive {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -399,8 +442,7 @@ impl SceneBuffer {
         let raw_indices = self.slice_raw::<u32>(scene_header.indices_offset, scene_header.indices_count);
         let raw_uv_headers =
             self.slice_raw::<TexCoordHeader>(scene_header.uv_header_offset, scene_header.uv_header_count);
-        let raw_uv_sets =
-            self.slice_raw::<TextureCoordinate>(scene_header.uv_sets_offset, scene_header.uv_sets_count);
+        let raw_uv_sets = self.slice_raw::<TextureCoordinate>(scene_header.uv_sets_offset, scene_header.uv_sets_count);
 
         self.slice::<NodeHeader>(scene_header.node_header_offset, scene_header.node_header_count)
             .iter()
@@ -424,11 +466,8 @@ impl SceneBuffer {
                             primitive_header.vertex_offset,
                             primitive_header.vertex_count,
                         );
-                        let indices: &[u32] = Self::slice_as(
-                            raw_indices,
-                            primitive_header.index_offset,
-                            primitive_header.index_count,
-                        );
+                        let indices: &[u32] =
+                            Self::slice_as(raw_indices, primitive_header.index_offset, primitive_header.index_count);
                         let uv_headers: &[TexCoordHeader] = Self::slice_as(
                             raw_uv_headers,
                             primitive_header.uv_header_offset,
@@ -456,7 +495,7 @@ impl SceneBuffer {
         let materials: &[Material] = self.slice(scene_header.materials_offset, scene_header.materials_count);
         let samplers: &[Sampler] = self.slice(scene_header.samplers_offset, scene_header.samplers_count);
         let raw_textures = self.slice(scene_header.texture_offset, scene_header.texture_size);
-        
+
         let create_texture_view = |texture_slot: Option<TextureSlot>| {
             texture_slot.and_then(|slot| {
                 let header = texture_headers[slot.texture_index as usize];
@@ -493,7 +532,7 @@ impl SceneBuffer {
         })
     }
 
-    pub fn from_gltf(data: Vec<u8>) -> anyhow::Result<Self> {        
+    pub fn from_gltf(data: Vec<u8>) -> anyhow::Result<Self> {
         let (gltf, buffers, images) = gltf::import_slice(data)?;
 
         let mut textures = Vec::new();
@@ -501,14 +540,14 @@ impl SceneBuffer {
         let mut samplers = Vec::new();
         let mut materials = Vec::new();
 
-        for material in gltf.materials() {                
+        for material in gltf.materials() {
             materials.push(Material::from_gltf(&material));
         }
 
         for sampler in gltf.samplers() {
             samplers.push(Sampler::from_gltf(&sampler));
         }
-        
+
         for image in images {
             let header = TextureHeader {
                 offset: textures.len(),
@@ -736,4 +775,66 @@ impl SceneBuffer {
             textures,
         ))
     }
+}
+
+pub fn unit_cube() -> (Vec<MeshVertex>, Vec<u32>, Vec<TextureCoordinate>) {
+    use glam::{Vec2, Vec3};
+
+    let positions = [
+        // front face
+        (Vec3::new(-0.5, -0.5, 0.5), Vec3::Z, Vec2::new(0.0, 0.0)),
+        (Vec3::new(0.5, -0.5, 0.5), Vec3::Z, Vec2::new(1.0, 0.0)),
+        (Vec3::new(0.5, 0.5, 0.5), Vec3::Z, Vec2::new(1.0, 1.0)),
+        (Vec3::new(-0.5, 0.5, 0.5), Vec3::Z, Vec2::new(0.0, 1.0)),
+        // back face
+        (Vec3::new(0.5, -0.5, -0.5), -Vec3::Z, Vec2::new(0.0, 0.0)),
+        (Vec3::new(-0.5, -0.5, -0.5), -Vec3::Z, Vec2::new(1.0, 0.0)),
+        (Vec3::new(-0.5, 0.5, -0.5), -Vec3::Z, Vec2::new(1.0, 1.0)),
+        (Vec3::new(0.5, 0.5, -0.5), -Vec3::Z, Vec2::new(0.0, 1.0)),
+        // left face
+        (Vec3::new(-0.5, -0.5, -0.5), -Vec3::X, Vec2::new(0.0, 0.0)),
+        (Vec3::new(-0.5, -0.5, 0.5), -Vec3::X, Vec2::new(1.0, 0.0)),
+        (Vec3::new(-0.5, 0.5, 0.5), -Vec3::X, Vec2::new(1.0, 1.0)),
+        (Vec3::new(-0.5, 0.5, -0.5), -Vec3::X, Vec2::new(0.0, 1.0)),
+        // right face
+        (Vec3::new(0.5, -0.5, 0.5), Vec3::X, Vec2::new(0.0, 0.0)),
+        (Vec3::new(0.5, -0.5, -0.5), Vec3::X, Vec2::new(1.0, 0.0)),
+        (Vec3::new(0.5, 0.5, -0.5), Vec3::X, Vec2::new(1.0, 1.0)),
+        (Vec3::new(0.5, 0.5, 0.5), Vec3::X, Vec2::new(0.0, 1.0)),
+        // top face
+        (Vec3::new(-0.5, 0.5, 0.5), Vec3::Y, Vec2::new(0.0, 0.0)),
+        (Vec3::new(0.5, 0.5, 0.5), Vec3::Y, Vec2::new(1.0, 0.0)),
+        (Vec3::new(0.5, 0.5, -0.5), Vec3::Y, Vec2::new(1.0, 1.0)),
+        (Vec3::new(-0.5, 0.5, -0.5), Vec3::Y, Vec2::new(0.0, 1.0)),
+        // bottom face
+        (Vec3::new(-0.5, -0.5, -0.5), -Vec3::Y, Vec2::new(0.0, 0.0)),
+        (Vec3::new(0.5, -0.5, -0.5), -Vec3::Y, Vec2::new(1.0, 0.0)),
+        (Vec3::new(0.5, -0.5, 0.5), -Vec3::Y, Vec2::new(1.0, 1.0)),
+        (Vec3::new(-0.5, -0.5, 0.5), -Vec3::Y, Vec2::new(0.0, 1.0)),
+    ];
+
+    let (vertices, uv_set): (Vec<MeshVertex>, Vec<TextureCoordinate>) = positions
+        .iter()
+        .map(|(pos, normal, uv)| {
+            (
+                MeshVertex {
+                    position: pos.to_array(),
+                    normal: normal.to_array(),
+                },
+                TextureCoordinate(uv.to_array()),
+            )
+        })
+        .collect();
+
+    // 12 triangles (2 per face)
+    let indices: Vec<u32> = vec![
+        0, 1, 2, 2, 3, 0, // front
+        4, 5, 6, 6, 7, 4, // back
+        8, 9, 10, 10, 11, 8, // left
+        12, 13, 14, 14, 15, 12, // right
+        16, 17, 18, 18, 19, 16, // top
+        20, 21, 22, 22, 23, 20, // bottom
+    ];
+
+    (vertices, indices, uv_set)
 }

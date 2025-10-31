@@ -4,7 +4,7 @@ use crate::asset::ResourcePath;
 fn create_dialog_future() -> impl Future<Output = Option<rfd::FileHandle>> {
     rfd::AsyncFileDialog::new()
         .add_filter("Scene", &["obj", "gltf", "glb"])
-        .add_filter("Pointcloud", &["las", "laz"])        
+        .add_filter("Pointcloud", &["las", "laz"])
         .pick_file()
 }
 
@@ -23,7 +23,7 @@ pub fn open_file_dialog(loader: AssetLoader) {
 pub fn open_file_dialog(loader: AssetLoader) {
     wasm_bindgen_futures::spawn_local(async move {
         if let Some(handle) = create_dialog_future().await {
-            loader.load(ResourcePath::Upload(handle.inner().clone()));            
+            loader.load(ResourcePath::Upload(handle.inner().clone()));
         }
     });
 }
