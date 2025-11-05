@@ -1,10 +1,19 @@
 use std::{collections::HashMap, marker::PhantomData};
 
 use bytemuck::{Pod, Zeroable};
+use uuid::Uuid;
 
 use crate::{context::RenderContext, entity::EntityId};
 
+#[derive(Debug)]
 pub struct ComponentId<T>(u32, PhantomData<T>);
+
+impl<T> Copy for ComponentId<T> {}
+impl<T> Clone for ComponentId<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 
 impl<T> ComponentId<T> {
     pub fn new(index: usize) -> Self {
@@ -21,7 +30,7 @@ pub struct RelationStore<A, B> {
     capacity: usize,
     is_dirty: bool,
     buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    // bind_group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
     _phantom: PhantomData<(A, B)>,
 }
@@ -31,7 +40,7 @@ impl<A, B> RelationStore<A, B> {
         let layout = context
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Light bind group layout"),
+                label: Some("Relation store group layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility,
@@ -45,7 +54,7 @@ impl<A, B> RelationStore<A, B> {
             });
 
         let buffer = create_buffer::<u32>(capacity, context);
-        let bind_group = create_bind_group(&buffer, &layout, context);
+        // let bind_group = create_bind_group(&buffer, &layout, context);
 
         Self {
             mapping: Vec::new(),
@@ -53,7 +62,7 @@ impl<A, B> RelationStore<A, B> {
             is_dirty: false,
             buffer,
             layout,
-            bind_group,
+            // bind_group,
             _phantom: PhantomData,
         }
     }
@@ -87,9 +96,9 @@ impl<A, B> RelationStore<A, B> {
         &self.buffer
     }
 
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
+    // pub fn bind_group(&self) -> &wgpu::BindGroup {
+    //     &self.bind_group
+    // }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout
@@ -111,7 +120,7 @@ impl<A, B> RelationStore<A, B> {
     fn grow(&mut self, context: &RenderContext) {
         self.capacity *= 2;
         self.buffer = create_buffer::<u32>(self.capacity, context);
-        self.bind_group = create_bind_group(&self.buffer, &self.layout, context);
+        // self.bind_group = create_bind_group(&self.buffer, &self.layout, context);
         self.sync(context);
         self.is_dirty = true;
     }
@@ -120,23 +129,23 @@ impl<A, B> RelationStore<A, B> {
 pub struct ComponentStore<T: Pod + Zeroable + Copy> {
     components: Vec<T>,
     capacity: usize,
-    index_map: HashMap<EntityId, usize>,
+    index_map: HashMap<Uuid, usize>,
     free_indices: Vec<usize>,
     is_dirty: bool,
     buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    // bind_group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
 }
 
 impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
-    pub fn new(capacity: usize, context: &RenderContext) -> Self {
+    pub fn new(capacity: usize, visibility: wgpu::ShaderStages, context: &RenderContext) -> Self {
         let layout = context
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Component bind group layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -147,7 +156,7 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
             });
 
         let buffer = create_buffer::<T>(capacity, context);
-        let bind_group = create_bind_group(&buffer, &layout, context);
+        // let bind_group = create_bind_group(&buffer, &layout, context);
 
         Self {
             components: Vec::new(),
@@ -156,13 +165,13 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
             free_indices: Vec::new(),
             is_dirty: false,
             buffer,
-            bind_group,
+            // bind_group,
             layout,
         }
     }
 
-    pub fn add(&mut self, entity: EntityId, component: T, context: &RenderContext) -> ComponentId<T> {
-        if let Some(&index) = self.index_map.get(&entity) {
+    pub fn add(&mut self, key: Uuid, component: T, context: &RenderContext) -> ComponentId<T> {
+        if let Some(&index) = self.index_map.get(&key) {
             self.components[index] = component;
             self.write(index, context);
             return ComponentId::new(index);
@@ -181,23 +190,23 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
             index
         };
 
-        self.index_map.insert(entity, index);
+        self.index_map.insert(key, index);
         self.write(index, context);
         ComponentId::new(index)
     }
 
-    pub fn remove(&mut self, entity: &EntityId) {
-        if let Some(index) = self.index_map.remove(entity) {
+    pub fn remove(&mut self, key: &Uuid) {
+        if let Some(index) = self.index_map.remove(key) {
             self.free_indices.push(index);
         }
     }
 
-    pub fn get(&self, entity: &EntityId) -> Option<&T> {
-        self.index_map.get(entity).map(|&index| &self.components[index])
+    pub fn get(&self, key: &Uuid) -> Option<&T> {
+        self.index_map.get(key).map(|&index| &self.components[index])
     }
 
-    pub fn get_mut(&mut self, entity: &EntityId) -> Option<&mut T> {
-        self.index_map.get(entity).map(|&index| &mut self.components[index])
+    pub fn get_mut(&mut self, key: &Uuid) -> Option<&mut T> {
+        self.index_map.get(key).map(|&index| &mut self.components[index])
     }
 
     pub fn get_by_id(&self, id: ComponentId<T>) -> Option<&T> {
@@ -208,10 +217,22 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
         self.components.get(index)
     }
 
-    pub fn iter_with_index(&self) -> impl Iterator<Item = (&EntityId, usize, &T)> {
+    pub fn get_index(&self, key: &Uuid) -> Option<ComponentId<T>> {
+        self.index_map.get(key).and_then(|&index| Some(ComponentId::new(index)))
+    }
+
+    pub fn set(&mut self, key: &Uuid, component: T, context: &RenderContext) {
+        let index = self.index_map.get(key);
+        if let Some(i) = index {
+            self.components[*i] = component;
+            self.write(*i, context);
+        }
+    }
+
+    pub fn iter_with_index(&self) -> impl Iterator<Item = (&Uuid, usize, &T)> {
         self.index_map
             .iter()
-            .map(|(entity, &index)| (entity, index, &self.components[index]))
+            .map(|(key, &index)| (key, index, &self.components[index]))
     }
 
     pub fn buffer(&self) -> &wgpu::Buffer {
@@ -228,15 +249,15 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
         dirty
     }
 
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
+    // pub fn bind_group(&self) -> &wgpu::BindGroup {
+    //     &self.bind_group
+    // }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout
     }
 
-    fn write(&self, index: usize, context: &RenderContext) {
+    pub fn write(&self, index: usize, context: &RenderContext) {
         let offset = (index * std::mem::size_of::<T>()) as u64;
         context
             .queue
@@ -252,7 +273,7 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
     fn grow(&mut self, context: &RenderContext) {
         self.capacity *= 2;
         self.buffer = create_buffer::<T>(self.capacity, context);
-        self.bind_group = create_bind_group(&self.buffer, &self.layout, context);
+        // self.bind_group = create_bind_group(&self.buffer, &self.layout, context);
         self.sync(context);
         self.is_dirty = true;
     }
@@ -260,7 +281,7 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
 
 fn create_buffer<T>(capacity: usize, context: &RenderContext) -> wgpu::Buffer {
     context.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Light storage buffer"),
+        label: Some("Component storage buffer"),
         size: (capacity * std::mem::size_of::<T>()) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -273,7 +294,7 @@ fn create_bind_group(
     context: &RenderContext,
 ) -> wgpu::BindGroup {
     context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Light bind group"),
+        label: Some("Component bind group"),
         layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
@@ -282,13 +303,13 @@ fn create_bind_group(
     })
 }
 
-pub struct LocalComponentStore<T> {
+pub struct HostComponentStore<T> {
     components: Vec<T>,
-    index_map: HashMap<EntityId, usize>,
+    index_map: HashMap<Uuid, usize>,
     free_indices: Vec<usize>,
 }
 
-impl<T> LocalComponentStore<T> {
+impl<T> HostComponentStore<T> {
     pub fn new() -> Self {
         Self {
             components: Vec::new(),
@@ -297,8 +318,8 @@ impl<T> LocalComponentStore<T> {
         }
     }
 
-    pub fn add(&mut self, entity: EntityId, component: T) -> ComponentId<T> {
-        if let Some(&index) = self.index_map.get(&entity) {
+    pub fn add(&mut self, key: Uuid, component: T) -> ComponentId<T> {
+        if let Some(&index) = self.index_map.get(&key) {
             self.components[index] = component;
             return ComponentId::new(index);
         }
@@ -312,22 +333,22 @@ impl<T> LocalComponentStore<T> {
             index
         };
 
-        self.index_map.insert(entity, index);
+        self.index_map.insert(key, index);
         ComponentId::new(index)
     }
 
-    pub fn remove(&mut self, entity: &EntityId) {
-        if let Some(index) = self.index_map.remove(entity) {
+    pub fn remove(&mut self, key: &Uuid) {
+        if let Some(index) = self.index_map.remove(key) {
             self.free_indices.push(index);
         }
     }
 
-    pub fn get(&self, entity: &EntityId) -> Option<&T> {
-        self.index_map.get(entity).map(|&index| &self.components[index])
+    pub fn get(&self, key: &Uuid) -> Option<&T> {
+        self.index_map.get(key).map(|&index| &self.components[index])
     }
 
-    pub fn get_mut(&mut self, entity: &EntityId) -> Option<&mut T> {
-        self.index_map.get(entity).map(|&index| &mut self.components[index])
+    pub fn get_mut(&mut self, key: &Uuid) -> Option<&mut T> {
+        self.index_map.get(key).map(|&index| &mut self.components[index])
     }
 
     pub fn get_by_id(&self, id: ComponentId<T>) -> Option<&T> {
@@ -338,10 +359,14 @@ impl<T> LocalComponentStore<T> {
         self.components.get(index)
     }
 
-    pub fn iter_with_index(&self) -> impl Iterator<Item = (&EntityId, usize, &T)> {
+    pub fn get_index(&self, key: &Uuid) -> Option<ComponentId<T>> {
+        self.index_map.get(key).and_then(|index| Some(ComponentId::new(*index)))
+    }
+
+    pub fn iter_with_index(&self) -> impl Iterator<Item = (&Uuid, usize, &T)> {
         self.index_map
             .iter()
-            .map(|(entity, &index)| (entity, index, &self.components[index]))
+            .map(|(key, &index)| (key, index, &self.components[index]))
     }
 
     pub fn components(&self) -> &Vec<T> {

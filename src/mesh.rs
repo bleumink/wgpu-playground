@@ -4,6 +4,7 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use glam::Vec4Swizzles;
 use gltf::json::extensions::texture;
 use image::EncodableLayout;
 use wgpu::util::DeviceExt;
@@ -12,31 +13,21 @@ use crate::{
     asset::ResourcePath,
     binary::BlobBuilder,
     context::RenderContext,
-    material::{Material, MaterialInstance, MaterialUniform, MaterialView, TextureSlot},
+    material::{Material, MaterialUniform, MaterialView, RawMaterial, TextureSlot},
     texture::{Sampler, Texture, TextureFormat, TextureView},
     vertex::Vertex,
 };
 
 pub trait DrawMesh<'a> {
-    fn draw_primitive_instanced(
-        &mut self,
-        primitive: &'a Primitive,
-        material: &'a MaterialInstance,
-        instances: Range<u32>,
-    );
-    fn draw_mesh_instanced(&mut self, mesh: &'a Mesh, material: &'a [MaterialInstance], instances: Range<u32>);
+    fn draw_primitive_instanced(&mut self, primitive: &'a Primitive, material: &'a Material, instances: Range<u32>);
+    fn draw_mesh_instanced(&mut self, mesh: &'a Mesh, material: &'a [Material], instances: Range<u32>);
 }
 
 impl<'a, 'b> DrawMesh<'b> for wgpu::RenderPass<'a>
 where
     'b: 'a,
 {
-    fn draw_primitive_instanced(
-        &mut self,
-        primitive: &'b Primitive,
-        material: &'b MaterialInstance,
-        instances: Range<u32>,
-    ) {
+    fn draw_primitive_instanced(&mut self, primitive: &'b Primitive, material: &'b Material, instances: Range<u32>) {
         self.set_vertex_buffer(0, primitive.vertex_buffer.slice(..));
         self.set_index_buffer(primitive.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
@@ -50,7 +41,7 @@ where
         self.draw_indexed(0..primitive.num_elements, 0, instances);
     }
 
-    fn draw_mesh_instanced(&mut self, mesh: &'b Mesh, materials: &'b [MaterialInstance], instances: Range<u32>) {
+    fn draw_mesh_instanced(&mut self, mesh: &'b Mesh, materials: &'b [Material], instances: Range<u32>) {
         for primitive in &mesh.primitives {
             let material = &materials[primitive.material_index];
             self.draw_primitive_instanced(primitive, material, instances.clone());
@@ -63,6 +54,8 @@ where
 pub struct MeshVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub tangent: [f32; 3],
+    pub bitangent: [f32; 3],
 }
 
 impl Vertex for MeshVertex {
@@ -79,6 +72,16 @@ impl Vertex for MeshVertex {
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                },                
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 9]>() as wgpu::BufferAddress,
+                    shader_location: 3,
                     format: wgpu::VertexFormat::Float32x3,
                 },
             ],
@@ -106,6 +109,12 @@ impl Vertex for TextureCoordinate {
 impl Default for TextureCoordinate {
     fn default() -> Self {
         Self([0.0, 0.0])
+    }
+}
+
+impl TextureCoordinate {
+    pub fn to_vec(&self) -> glam::Vec2 {
+        glam::Vec2::from_array(self.0)
     }
 }
 
@@ -331,14 +340,14 @@ impl Primitive {
 pub struct Scene {
     pub label: Option<String>,
     pub nodes: Vec<Node>,
-    pub materials: Vec<MaterialInstance>,
+    pub materials: Vec<Material>,
 }
 
 impl Scene {
     pub fn from_buffer(buffer: SceneBuffer, context: &RenderContext, label: Option<String>) -> Self {
         let materials = buffer
             .iter_materials()
-            .map(|material| MaterialInstance::new(material, label.as_deref(), context))
+            .map(|material| Material::new(material, label.as_deref(), context))
             .collect::<Vec<_>>();
 
         let nodes = buffer
@@ -361,7 +370,7 @@ impl SceneBuffer {
         primitive_headers: Vec<PrimitiveHeader>,
         uv_headers: Vec<TexCoordHeader>,
         texture_headers: Vec<TextureHeader>,
-        materials: Vec<Material>,
+        materials: Vec<RawMaterial>,
         samplers: Vec<Sampler>,
         vertices: Vec<MeshVertex>,
         indices: Vec<u32>,
@@ -492,7 +501,7 @@ impl SceneBuffer {
         let scene_header: &SceneHeader = bytemuck::from_bytes(&self.0[..std::mem::size_of::<SceneHeader>()]);
         let texture_headers: &[TextureHeader] =
             self.slice(scene_header.texture_header_offset, scene_header.texture_header_count);
-        let materials: &[Material] = self.slice(scene_header.materials_offset, scene_header.materials_count);
+        let materials: &[RawMaterial] = self.slice(scene_header.materials_offset, scene_header.materials_count);
         let samplers: &[Sampler] = self.slice(scene_header.samplers_offset, scene_header.samplers_count);
         let raw_textures = self.slice(scene_header.texture_offset, scene_header.texture_size);
 
@@ -535,18 +544,11 @@ impl SceneBuffer {
     pub fn from_gltf(data: Vec<u8>) -> anyhow::Result<Self> {
         let (gltf, buffers, images) = gltf::import_slice(data)?;
 
+        let materials = gltf.materials().map(RawMaterial::from_gltf).collect::<Vec<_>>();
+        let samplers = gltf.samplers().map(Sampler::from_gltf).collect::<Vec<_>>();
+
         let mut textures = Vec::new();
         let mut texture_headers = Vec::new();
-        let mut samplers = Vec::new();
-        let mut materials = Vec::new();
-
-        for material in gltf.materials() {
-            materials.push(Material::from_gltf(&material));
-        }
-
-        for sampler in gltf.samplers() {
-            samplers.push(Sampler::from_gltf(&sampler));
-        }
 
         for image in images {
             let header = TextureHeader {
@@ -581,17 +583,43 @@ impl SceneBuffer {
                     primitive_count: mesh.primitives().len(),
                 });
 
+                fn index_to_position(positions: &[glam::Vec3], indices: &[u32]) -> [glam::Vec3; 3] {
+                        let v0 = positions[indices[0] as usize];
+                        let v1 = positions[indices[0] as usize];
+                        let v2 = positions[indices[0] as usize];                    
+
+                        [v0, v1, v2]
+                } 
+
+                fn iter_normals(positions: &[glam::Vec3], indices: &[u32]) -> impl Iterator<Item = glam::Vec3> {
+                    indices.chunks_exact(3).map(|index| {
+                        let [v0, v1, v2] = index_to_position(positions, index);
+                        (v1 - v0).cross(v2 - v0).normalize_or_zero()
+                    })
+                }
+
+                fn iter_tangents(positions: &[glam::Vec3], normals: &[glam::Vec3], indices: &[u32], uvs: &[TextureCoordinate]) -> impl Iterator<Item = glam::Vec4> {
+                    indices.chunks_exact(3)
+                        .map(|index| {
+                            let [v0, v1, v2] = index_to_position(positions, index);
+
+                            let uv0 = uvs[index[0] as usize].to_vec();
+                            let uv1 = uvs[index[1] as usize].to_vec();
+                            let uv2 = uvs[index[2] as usize].to_vec();
+
+                            let delta_pos1 = v1 - v0;
+                            let delta_pos2 = v2 - v0;
+
+                            let delta_uv1 = uv1 - uv0;
+                            let delta_uv2 = uv2 - uv0;
+
+                            let r = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x);   
+                            let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;                            
+                        })
+                }
+
                 for primitive in mesh.primitives() {
                     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-
-                    let primitive_indices = reader.read_indices().unwrap().into_u32().collect::<Vec<_>>();
-                    let positions = reader.read_positions().unwrap();
-                    let normals = reader.read_normals().unwrap();
-
-                    let primitive_vertices = positions
-                        .zip(normals)
-                        .map(|(position, normal)| MeshVertex { position, normal })
-                        .collect::<Vec<_>>();
 
                     let mut primitive_uv_headers = Vec::new();
                     for set_index in 0..6 {
@@ -611,6 +639,45 @@ impl SceneBuffer {
                             break;
                         }
                     }
+
+                    let primitive_indices: Vec<u32> = reader
+                        .read_indices()
+                        .map(|iter| iter.into_u32().collect())
+                        .unwrap_or_default();
+                    
+                    let positions: Vec<glam::Vec3> = reader
+                        .read_positions()
+                        .map(|iter| iter.map(glam::Vec3::from_array).collect())
+                        .unwrap_or_default();
+
+                    let normals: Vec<glam::Vec3> = reader
+                        .read_normals()
+                        .map(|iter| iter.map(glam::Vec3::from_array).collect())
+                        .unwrap_or_else(|| iter_normals(&positions, &indices).collect());
+
+                    let tangents: Vec<glam::Vec3> = reader
+                        .read_tangents()
+                        .map(|iter| iter.collect())
+                        .unwrap_or_else(|| iter_tangents(&positions, &uv_sets[0], &indices));
+
+                    let bitangents = tangents
+                        .iter()
+                        .zip(&normals)
+                        .map(|(tangent, normal)| normal.cross(*tangent).normalize_or_zero())
+                        .collect::<Vec<_>>();
+
+                    let primitive_vertices = positions
+                        .into_iter()
+                        .zip(normals)
+                        .zip(tangents)
+                        .zip(bitangents)
+                        .map(|(((position, normal), tangents), bitangent)| MeshVertex {
+                            position,
+                            normal: normal.to_array(),
+                            tangent: tangent.to_array(),
+                            bitangent: bitangent.to_array(),
+                        })
+                        .collect::<Vec<_>>();
 
                     let header = PrimitiveHeader {
                         vertex_offset: std::mem::size_of::<MeshVertex>() * vertices.len(),
@@ -669,25 +736,50 @@ impl SceneBuffer {
         let mut materials = Vec::new();
 
         for material in &obj_materials? {
-            if let Some(filename) = &material.diffuse_texture {
-                let texture_path = path.create_relative(&filename);
-                let texture = texture_path.load_binary().await?;
-                let image = image::load_from_memory(&texture)?.to_rgba8();
-                let buffer = image.as_bytes();
-                let header = TextureHeader {
-                    offset: textures.len(),
-                    size: buffer.len(),
-                    width: image.width(),
-                    height: image.height(),
-                    format: TextureFormat::RGBA8,
-                };
+            let mut load_texture = async |obj_texture: &Option<String>| -> anyhow::Result<Option<usize>> {
+                if let Some(filename) = obj_texture {
+                    let texture_path = path.create_relative(&filename);
+                    let texture = texture_path.load_binary().await?;
+                    let image = image::load_from_memory(&texture)?.to_rgba8();
+                    let buffer = image.as_bytes();
+                    let header = TextureHeader {
+                        offset: textures.len(),
+                        size: buffer.len(),
+                        width: image.width(),
+                        height: image.height(),
+                        format: TextureFormat::RGBA8,
+                    };
 
-                let new_material = Material::from_obj(&material);
+                    texture_headers.push(header);
+                    textures.extend_from_slice(buffer);
 
-                materials.push(new_material);
-                texture_headers.push(header);
-                textures.extend(buffer);
-            }
+                    Ok(Some(texture_headers.len() - 1))
+                } else {
+                    Ok(None)
+                }
+            };
+
+            let diffuse_index = load_texture(&material.diffuse_texture).await?;
+            let normal_index = load_texture(&material.normal_texture).await?;
+
+            let new_material = RawMaterial::from_obj(&material);
+            materials.push(new_material);
+
+            // if let Some(filename) = &material.diffuse_texture {
+            //     let texture_path = path.create_relative(&filename);
+            //     let texture = texture_path.load_binary().await?;
+            //     let image = image::load_from_memory(&texture)?.to_rgba8();
+            //     let buffer = image.as_bytes();
+            //     let header = TextureHeader {
+            //         offset: textures.len(),
+            //         size: buffer.len(),
+            //         width: image.width(),
+            //         height: image.height(),
+            //         format: TextureFormat::RGBA8,
+            //     };
+
+            // texture_headers.push(header);
+            // textures.extend(buffer);
         }
 
         let (node_headers, primitive_headers, uv_headers, vertices, indices, uv_sets) = models.into_iter().fold(

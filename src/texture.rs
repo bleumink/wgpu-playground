@@ -110,7 +110,7 @@ impl Sampler {
         )
     }
 
-    pub fn from_gltf(sampler: &gltf::texture::Sampler) -> Self {
+    pub fn from_gltf(sampler: gltf::texture::Sampler) -> Self {
         let (min_filter, mipmap_filter) = match sampler.min_filter() {
             Some(MinFilter::Nearest) => (0, 0),
             Some(MinFilter::Linear) => (1, 0),

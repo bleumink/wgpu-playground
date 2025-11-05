@@ -1,20 +1,34 @@
 #[cfg(target_family = "wasm")]
 use std::cell::RefCell;
-use std::{collections::HashMap, rc::Rc};
 use std::sync::Arc;
+use std::{collections::HashMap, rc::Rc};
 
 use crossbeam::channel::{Receiver, Sender};
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::State as EguiState;
 use gltf::json::extensions::scene;
 use uuid::Uuid;
-use wgpu::{Instance, util::DeviceExt};
+use wgpu::util::DeviceExt;
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen::prelude::*;
 
+use crate::scene::{Geometry, PointcloudHandle, PrimitiveHandle, Renderable};
+use crate::transform::TransformUniform;
 use crate::{
-    asset::AssetBuffer, context::RenderContext, entity::EntityId, instance::RawInstance, light::Light, mesh::{Mesh, MeshVertex, Scene, TextureCoordinate}, pointcloud::{PointVertex, Pointcloud}, scene::{DrawScene, RenderKind, SceneGraph}, surface::Surface, texture::Texture, transform::TransformBuffer, ui::UiData, vertex::{Vertex, VertexLayoutBuilder}
+    asset::AssetBuffer,
+    context::RenderContext,
+    entity::EntityId,
+    instance::Instance,
+    light::Light,
+    mesh::{Mesh, MeshVertex, Scene, TextureCoordinate},
+    pointcloud::{PointVertex, Pointcloud},
+    scene::{DrawScene, SceneGraph},
+    surface::Surface,
+    texture::Texture,
+    transform::TransformBuffer,
+    ui::UiData,
+    vertex::{Vertex, VertexLayoutBuilder},
 };
 
 // pub const MAT_SWAP_YZ: [[f32; 4]; 4] = [
@@ -150,9 +164,9 @@ pub enum RenderCommand {
         entity_id: EntityId,
         light: Light,
     },
-    Translate {
+    UpdateTransform {
         entity_id: EntityId,
-        translation: glam::Vec3,
+        transform: glam::Mat4,
     },
     Stop,
 }
@@ -178,8 +192,8 @@ impl PipelineCache {
         Self(HashMap::new())
     }
 
-    pub fn insert(&mut self, id: &'static str, pipeline: wgpu::RenderPipeline) {        
-        self.0.insert(id, pipeline);        
+    pub fn insert(&mut self, id: &'static str, pipeline: wgpu::RenderPipeline) {
+        self.0.insert(id, pipeline);
     }
 
     pub fn get(&self, id: &str) -> Option<&wgpu::RenderPipeline> {
@@ -192,7 +206,7 @@ pub struct Renderer {
     context: RenderContext,
     camera: Camera,
     scene: SceneGraph,
-    pipeline_cache: PipelineCache,    
+    pipeline_cache: PipelineCache,
     egui_renderer: EguiRenderer,
     render_rx: Receiver<RenderCommand>,
     result_tx: Sender<RenderEvent>,
@@ -234,6 +248,7 @@ impl Renderer {
             .fold(VertexLayoutBuilder::new().push::<MeshVertex>(), |builder, _| {
                 builder.push::<TextureCoordinate>()
             })
+            .push::<Instance>()
             .build();
 
         let render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -286,7 +301,11 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let pointcloud_vertex_layout = VertexLayoutBuilder::new().push::<PointVertex>().build();
+        let pointcloud_vertex_layout = VertexLayoutBuilder::new()
+            .push::<PointVertex>()
+            .push::<Instance>()
+            .build();
+
         let pointcloud_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Pointcloud pipeline"),
             layout: Some(&pointcloud_pipeline_layout),
@@ -401,15 +420,14 @@ impl Renderer {
         match asset {
             AssetBuffer::Scene(buffer, label) => {
                 let scene = Scene::from_buffer(buffer, &self.context, label.clone());
-                let material_id = self.scene.add_materials(scene.materials);
+                let material_ids = scene
+                    .materials
+                    .into_iter()
+                    .map(|material| self.scene.add_material(material))
+                    .collect::<Vec<_>>();
 
-                for node in scene.nodes {                    
-                    let pipeline = self.pipeline_cache.get("mesh").unwrap();
-                    let render_id = self.scene.add_group(
-                        RenderKind::Mesh(node.mesh, material_id.clone()),
-                        pipeline.clone(),
-                    );
-
+                for node in scene.nodes {
+                    let render_id = self.scene.add_mesh(node.mesh, &material_ids);
                     self.result_tx.send(RenderEvent::LoadComplete {
                         render_id,
                         transform: Some(node.transform),
@@ -419,11 +437,7 @@ impl Renderer {
             }
             AssetBuffer::Pointcloud(buffer, label) => {
                 let pointcloud = Pointcloud::from_buffer(buffer, &self.context, label.clone());
-                let pipeline = self.pipeline_cache.get("pointcloud").unwrap();
-
-                let render_id = self
-                    .scene
-                    .add_group(RenderKind::Pointcloud(pointcloud), pipeline.clone());
+                let render_id = self.scene.add_pointcloud(pointcloud);
 
                 self.result_tx.send(RenderEvent::LoadComplete {
                     render_id,
@@ -437,8 +451,7 @@ impl Renderer {
     }
 
     fn spawn_asset(&mut self, entity_id: EntityId, render_id: RenderId, transform: glam::Mat4) {
-        self.scene
-            .add_renderable(entity_id, render_id, transform, &self.context);
+        self.scene.add_node(entity_id, render_id, transform, &self.context);
     }
 
     fn spawn_light(&mut self, entity_id: EntityId, light: Light) {
@@ -474,7 +487,7 @@ impl Renderer {
             timestamp_writes: None,
         });
 
-        self.scene.sync(&self.context);    
+        self.scene.sync(&self.context);
         render_pass.draw_scene(&self.scene, &self.camera.bind_group, &self.pipeline_cache);
     }
 
@@ -557,7 +570,10 @@ impl Renderer {
                     device: self.context.device.clone(),
                 })?;
             }
-            RenderCommand::Translate { entity_id, translation } => {}
+            RenderCommand::UpdateTransform { entity_id, transform } => {
+                let uniform = TransformUniform::new(transform);
+                self.scene.transforms.set(&entity_id, uniform, &self.context);
+            }
             RenderCommand::Stop => {
                 self.is_running = false;
             }

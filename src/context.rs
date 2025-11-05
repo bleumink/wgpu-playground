@@ -36,28 +36,38 @@ impl RenderContext {
             })
             .await?;
 
-        let bind_group_layout_entries = (0..Self::TEXTURE_COUNT)
-            .flat_map(|index| {
-                [
-                    wgpu::BindGroupLayoutEntry {
-                        binding: (index * 2) as u32,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+        let mut bind_group_layout_entries = Vec::new();
+        bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+
+        (0..Self::TEXTURE_COUNT).for_each(|index| {
+            bind_group_layout_entries.extend_from_slice(&[
+                wgpu::BindGroupLayoutEntry {
+                    binding: (index * 2 + 1) as u32,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: (index * 2 + 1) as u32,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ]
-            })
-            .collect::<Vec<_>>();
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: (index * 2 + 2) as u32,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ]);
+        });
 
         let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Texture bind group layout"),

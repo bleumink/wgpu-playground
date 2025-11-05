@@ -12,6 +12,10 @@ impl TransformUniform {
     pub fn identity() -> Self {
         Self(glam::Mat4::IDENTITY.to_cols_array_2d())
     }
+
+    pub fn to_mat4(&self) -> glam::Mat4 {
+        glam::Mat4::from_cols_array_2d(&self.0)
+    }
 }
 
 pub struct TransformBuffer {

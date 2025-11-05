@@ -3,7 +3,18 @@
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) tex_coords: vec2<f32>,
+    @location(2) uv1: vec2<f32>,
+    @location(3) uv2: vec2<f32>,
+    @location(4) uv3: vec2<f32>,
+    @location(5) uv4: vec2<f32>,
+    @location(6) uv5: vec2<f32>,
+    @location(7) uv6: vec2<f32>,
+    
+}
+
+struct InstanceInput {
+    @location(8) transform_index: u32, 
+    @location(9) normal_index: u32,
 }
 
 struct VertexOutput {
@@ -21,13 +32,10 @@ struct TransformUniform {
 }
 
 struct LightUniform {
-    position: vec3<f32>,
-    kind: u32,
-    direction: vec3<f32>,
-    cutoff: f32,    
     color: vec3<f32>,
-    intensity: f32,
-    transform_index: u32,
+    cutoff: f32,    
+    intensity: f32, 
+    kind: u32,    
 }
 
 @group(1) @binding(0)
@@ -39,17 +47,17 @@ var<storage, read> transforms: array<TransformUniform>;
 @group(2) @binding(2)
 var<storage, read> lights: array<LightUniform>;
 
-@group(2) @binding(3)
-var<storage, read> instance_indices: array<u32>;
+// @group(2) @binding(3)
+// var<storage, read> light_transform_index: array<u32>;
 
 @vertex
 fn vs_main(
     mesh: VertexInput,
+    instance: InstanceInput,
     @builtin(instance_index) instance_id: u32,
 ) -> VertexOutput {
-    let light = lights[instance_id];
-    let global_index = instance_indices[instance_id];
-    let transform = transforms[global_index].matrix;
+    let light = lights[0];    
+    let transform = transforms[instance.transform_index].matrix;
 
     let scale = 0.25;
     var out: VertexOutput;

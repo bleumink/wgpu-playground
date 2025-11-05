@@ -34,14 +34,14 @@ pub struct MaterialUniform {
 }
 
 #[derive(Clone, Debug)]
-pub struct MaterialInstance {
+pub struct Material {
     pub uniform: MaterialUniform,
     pub uniform_buffer: wgpu::Buffer,
     pub textures: Vec<TextureInstance>,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl MaterialInstance {
+impl Material {
     pub fn new(material: MaterialView, label: Option<&str>, context: &RenderContext) -> Self {
         let material_textures = [
             material.base_color,
@@ -87,42 +87,24 @@ impl MaterialInstance {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let (layout_entries, bind_group_entries): (Vec<_>, Vec<_>) = textures
-            .iter()
-            .enumerate()
-            .flat_map(|(index, texture_instance)| {
-                [
-                    (
-                        wgpu::BindGroupLayoutEntry {
-                            binding: (index * 2) as u32,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: (index * 2) as u32,
-                            resource: wgpu::BindingResource::TextureView(&texture_instance.texture.view),
-                        },
-                    ),
-                    (
-                        wgpu::BindGroupLayoutEntry {
-                            binding: (index * 2 + 1) as u32,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: (index * 2 + 1) as u32,
-                            resource: wgpu::BindingResource::Sampler(&texture_instance.texture.sampler),
-                        },
-                    ),
-                ]
-            })
-            .unzip();
+        let mut bind_group_entries = Vec::new();
+        bind_group_entries.push(wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        });
+
+        textures.iter().enumerate().for_each(|(index, texture_instance)| {
+            bind_group_entries.extend_from_slice(&[
+                wgpu::BindGroupEntry {
+                    binding: (index * 2 + 1) as u32,
+                    resource: wgpu::BindingResource::TextureView(&texture_instance.texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: (index * 2 + 2) as u32,
+                    resource: wgpu::BindingResource::Sampler(&texture_instance.texture.sampler),
+                },
+            ]);
+        });
 
         let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
@@ -158,7 +140,7 @@ pub struct MaterialView<'a> {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct Material {
+pub struct RawMaterial {
     pub base_color: Option<TextureSlot>,
     pub metallic_roughness: Option<TextureSlot>,
     pub normal: Option<TextureSlot>,
@@ -176,8 +158,8 @@ pub struct Material {
     pub _padding: [u8; 2],
 }
 
-impl Material {
-    pub fn from_gltf(material: &gltf::Material) -> Self {
+impl RawMaterial {
+    pub fn from_gltf(material: gltf::Material) -> Self {
         let pbr = material.pbr_metallic_roughness();
 
         Self {
@@ -207,7 +189,11 @@ impl Material {
         Self {
             base_color: Some(TextureSlot::default()),
             metallic_roughness: None,
-            normal: None,
+            normal: Some(TextureSlot {
+                texture_index: 1,
+                uv_index: 0,
+                sampler_index: 0,
+            }),
             occlusion: None,
             emissive: None,
             base_color_factor: [1.0, 1.0, 1.0, 1.0],

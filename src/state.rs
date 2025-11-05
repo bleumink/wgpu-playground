@@ -12,7 +12,7 @@ use crate::{
     asset::{AssetLoader, ResourcePath},
     camera::{Camera, CameraController, Projection},
     entity::{Entity, EntityId},
-    instance::Instance,
+    instance::DemoInstance,
     light::Light,
     renderer::{RenderCommand, RenderEvent, RenderId},
     surface::{Surface, SurfaceState},
@@ -65,8 +65,8 @@ impl State {
                 y: -3.0,
                 z: 2.0,
             },
-            color: glam::Vec3 { x: 1.0, y: 1.0, z: 1.0 },
-            intensity: 1.0,
+            color: glam::Vec3 { x: 0.9, y: 0.9, z: 0.6 },
+            intensity: 100.0,
         };
 
         let transform = light.to_transform();
@@ -76,6 +76,28 @@ impl State {
             light,
         })?;
         entities.insert(entity.id(), entity);
+
+        let directional = Light::Directional {
+            direction: glam::Vec3 {
+                x: 0.683,
+                y: -0.259,
+                z: -0.683,
+            },
+            color: glam::Vec3 {
+                x: 1.0,
+                y: 0.956,
+                z: 0.897,
+            },
+            intensity: 1.0,
+        };
+
+        let directional_transform = directional.to_transform();
+        let directional_entity = Entity::new(directional_transform, Some("dir_light".to_string()));
+        render_sender.send(RenderCommand::SpawnLight {
+            entity_id: directional_entity.id(),
+            light: directional,
+        })?;
+        entities.insert(directional_entity.id(), directional_entity);
 
         Ok(Self {
             window,
@@ -98,21 +120,6 @@ impl State {
     #[cfg(not(target_family = "wasm"))]
     pub fn update(&mut self, event_loop: &ActiveEventLoop) {
         self.window.request_redraw();
-
-        let light = self
-            .entities
-            .values()
-            .find(|entity| entity.label().as_ref().unwrap() == "light")
-            .unwrap();
-        let position = light.transform().w_axis.truncate();
-        let rotation = glam::Quat::from_rotation_y(1.0_f32.to_radians());
-        let new_position = rotation * position;
-        let translation = new_position - position;
-
-        // self.render_tx.send(RenderCommand::Translate {
-        //     entity_id: light.id(),
-        //     translation,
-        // });
 
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
@@ -149,7 +156,7 @@ impl State {
                                         glam::Quat::from_axis_angle(position.normalize(), 45.0_f32.to_radians())
                                     };
 
-                                    Instance::new(position, rotation)
+                                    DemoInstance::new(position, rotation)
                                 })
                             })
                             .collect::<Vec<_>>();
@@ -228,6 +235,22 @@ impl State {
             }
         }
 
+        if let Some(light) = self
+            .entities
+            .values_mut()
+            .find(|entity| entity.label().as_ref().unwrap() == "light")
+        {
+            let position = light.transform().w_axis.truncate();
+            let rotation = glam::Quat::from_rotation_y(5.0_f32.to_radians() * delta_time.as_secs_f32());
+            let new_position = rotation * position;
+            let transform = glam::Mat4::from_translation(new_position);
+            light.set_transform(transform);
+
+            self.render_tx.send(RenderCommand::UpdateTransform {
+                entity_id: light.id(),
+                transform,
+            })?;
+        }
         Ok(())
     }
 
@@ -272,20 +295,15 @@ impl State {
                                         glam::Quat::from_axis_angle(position.normalize(), 45.0_f32.to_radians())
                                     };
 
-                                    Instance::new(position, rotation)
+                                    DemoInstance::new(position, rotation)
                                 })
                             })
                             .collect::<Vec<_>>();
 
                         for instance in instances {
-                            let entity_id = Entity::new_id();
-                            let entity = Entity::new(
-                                render_id,
-                                instance.position,
-                                instance.rotation,
-                                glam::Vec3::ONE,
-                                label.clone(),
-                            );
+                            let transform = glam::Mat4::from_rotation_translation(instance.rotation, instance.position);
+                            let entity = Entity::new(transform, label.clone());
+
                             let translation = glam::Vec3 {
                                 x: 0.0,
                                 y: -5.0,
@@ -293,28 +311,26 @@ impl State {
                             };
                             self.render_tx
                                 .send(RenderCommand::SpawnAsset {
-                                    entity_id,
+                                    entity_id: entity.id(),
                                     render_id,
-                                    transform: glam::Mat4::from_translation(translation) * entity.to_transform(),
+                                    transform: glam::Mat4::from_translation(translation) * entity.transform(),
                                 })
                                 .unwrap();
-                            self.entities.insert(entity_id, entity);
+                            self.entities.insert(entity.id(), entity);
                         }
                     } else {
                         let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
-                        let (scale, rotation, position) = transform.to_scale_rotation_translation();
-
-                        let entity_id = Entity::new_id();
-                        let entity = Entity::new(render_id, position, rotation, scale, label);
+                        // let (scale, rotation, position) = transform.to_scale_rotation_translation();
+                        let entity = Entity::new(transform, label);
 
                         self.render_tx
                             .send(RenderCommand::SpawnAsset {
-                                entity_id,
+                                entity_id: entity.id(),
                                 render_id,
                                 transform,
                             })
                             .unwrap();
-                        self.entities.insert(entity_id, entity);
+                        self.entities.insert(entity.id(), entity);
                     }
                 }
                 _ => (),
@@ -325,6 +341,27 @@ impl State {
             self.camera.position(),
             self.projection.matrix() * self.camera.view_matrix(),
         );
+
+        // Debug
+        let light = self
+            .entities
+            .values_mut()
+            .find(|entity| entity.label().as_ref().unwrap() == "light")
+            .unwrap();
+
+        let position = light.transform().w_axis.truncate();
+        let rotation = glam::Quat::from_rotation_y(5.0_f32.to_radians() * delta_time.as_secs_f32());
+        let new_position = rotation * position;
+        let transform = glam::Mat4::from_translation(new_position);
+        light.set_transform(transform);
+
+        self.render_tx
+            .send(RenderCommand::UpdateTransform {
+                entity_id: light.id(),
+                transform,
+            })
+            .unwrap();
+        // end debug
 
         if let Err(error) = self.renderer.run() {
             log::error!("Error handling renderer events: {}", error);

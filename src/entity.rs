@@ -35,4 +35,8 @@ impl Entity {
     pub fn transform(&self) -> glam::Mat4 {
         self.transform
     }
+
+    pub fn set_transform(&mut self, transform: glam::Mat4) {
+        self.transform = transform;
+    }
 }

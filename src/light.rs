@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use wgpu::util::DeviceExt;
 
-use crate::{context::RenderContext, entity::EntityId, scene::EntityTransformData, transform::TransformUniform};
+use crate::{context::RenderContext, entity::EntityId, transform::TransformUniform};
 
 pub struct LightId(pub usize);
 
@@ -32,43 +32,31 @@ pub enum Light {
 impl Light {
     pub fn to_light_uniform(&self) -> LightUniform {
         match self {
-            Self::Directional {
-                direction,
-                color,
-                intensity,
-            } => LightUniform {
-                position: [0.0, 0.0, 0.0],
-                direction: direction.to_array(),
+            Self::Directional { color, intensity, .. } => LightUniform {
                 color: color.to_array(),
                 kind: 0,
                 intensity: *intensity,
                 cutoff: 0.0,
+                _padding: [0; 2],
             },
-            Self::Point {
-                position,
-                color,
-                intensity,
-            } => LightUniform {
-                position: position.to_array(),
-                direction: [0.0; 3],
+            Self::Point { color, intensity, .. } => LightUniform {
                 color: color.to_array(),
                 kind: 1,
                 intensity: *intensity,
                 cutoff: 0.0,
+                _padding: [0; 2],
             },
             Self::Spot {
-                position,
-                direction,
                 color,
                 intensity,
                 cutoff,
+                ..
             } => LightUniform {
-                position: position.to_array(),
-                direction: direction.to_array(),
                 color: color.to_array(),
                 kind: 2,
                 intensity: *intensity,
                 cutoff: *cutoff,
+                _padding: [0; 2],
             },
         }
     }
@@ -114,149 +102,9 @@ impl Light {
 #[repr(C, align(16))]
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 pub struct LightUniform {
-    position: [f32; 3],
-    kind: u32,
-    direction: [f32; 3],
-    cutoff: f32,
-    color: [f32; 3],
-    intensity: f32,
-}
-
-pub struct LightBuffer {
-    capacity: usize,
-    lights: Vec<LightUniform>,
-    instances: Vec<EntityTransformData>,
-    buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    layout: wgpu::BindGroupLayout,
-}
-
-impl LightBuffer {
-    pub fn new(capacity: usize, context: &RenderContext) -> Self {
-        let layout = context
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Light bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let buffer = Self::create_buffer::<LightUniform>(capacity, context);
-        let index_buffer = Self::create_buffer::<u32>(capacity, context);
-        let bind_group = Self::create_bind_group(&buffer, &index_buffer, &layout, context);
-
-        Self {
-            capacity,
-            lights: Vec::new(),
-            instances: Vec::new(),
-            buffer,
-            index_buffer,
-            bind_group,
-            layout,
-        }
-    }
-
-    pub fn add(&mut self, entity_id: EntityId, uniform: LightUniform, transform_index: usize, context: &RenderContext) {
-        let entity_data = EntityTransformData(entity_id, transform_index);
-        self.instances.push(entity_data);
-
-        let id = self.lights.len();
-        self.lights.push(uniform);
-        self.update_buffer(context);
-    }
-
-    pub fn iter_indices(&self) -> impl Iterator<Item = u32> {
-        self.instances.iter().map(|transform_data| transform_data.1 as u32)
-    }
-
-    pub fn write(&mut self, id: LightId, light: Light, context: &RenderContext) {
-        let index = id.0;
-        if index >= self.lights.len() {
-            self.lights.resize(index + 1, LightUniform::zeroed());
-        }
-
-        let uniform = light.to_light_uniform();
-        self.lights[index] = uniform;
-
-        let offset = (index * std::mem::size_of::<LightUniform>()) as u64;
-        context
-            .queue
-            .write_buffer(&self.buffer, offset, bytemuck::bytes_of(&uniform));
-    }
-
-    fn update_buffer(&mut self, context: &RenderContext) {
-        if self.lights.len() > self.capacity {
-            self.capacity = self.lights.len() * 2;
-            self.buffer = Self::create_buffer::<LightUniform>(self.capacity, context);
-            self.bind_group = Self::create_bind_group(&self.buffer, &self.index_buffer, &self.layout, context)
-        }
-
-        context
-            .queue
-            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.lights));
-    }
-
-    fn create_buffer<T>(capacity: usize, context: &RenderContext) -> wgpu::Buffer {
-        context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Light storage buffer"),
-            size: (capacity * std::mem::size_of::<T>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    fn create_bind_group(
-        buffer: &wgpu::Buffer,
-        index_buffer: &wgpu::Buffer,
-        layout: &wgpu::BindGroupLayout,
-        context: &RenderContext,
-    ) -> wgpu::BindGroup {
-        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Light bind group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: index_buffer.as_entire_binding(),
-                },
-            ],
-        })
-    }
-
-    pub fn lights(&self) -> &[LightUniform] {
-        &self.lights
-    }
-
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
-
-    pub fn layout(&self) -> &wgpu::BindGroupLayout {
-        &self.layout
-    }
+    pub color: [f32; 3],
+    pub cutoff: f32,
+    pub intensity: f32,
+    pub kind: u32,
+    _padding: [u32; 2],
 }

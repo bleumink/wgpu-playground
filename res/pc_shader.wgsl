@@ -2,7 +2,11 @@
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
-    @location(2) intensity: f32,
+    @location(2) intensity: f32,    
+}
+
+struct InstanceInput {
+    @location(3) transform_index: u32, 
 }
 
 struct VertexOutput {
@@ -25,16 +29,12 @@ var<uniform> camera: CameraUniform;
 @group(2) @binding(0)
 var<storage, read> transforms: array<TransformUniform>;
 
-@group(2) @binding(1)
-var<storage, read> instance_indices: array<u32>;
-
 @vertex
 fn vs_main(
-    points: VertexInput,
-    @builtin(instance_index) instance_id: u32,
+    points: VertexInput,    
+    instance: InstanceInput,
 ) -> VertexOutput {
-    let global_index = instance_indices[instance_id];
-    let transform = transforms[global_index].matrix;
+    let transform = transforms[instance.transform_index].matrix;
 
     var out: VertexOutput;
     out.clip_position = camera.view_projection * transform * vec4<f32>(points.position, 1.0);

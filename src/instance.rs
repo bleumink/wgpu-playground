@@ -1,16 +1,18 @@
+use std::collections::HashMap;
+
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
-use crate::context::RenderContext;
+use crate::{context::RenderContext, scene::SceneGraph, vertex::Vertex};
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Instance {
+pub struct DemoInstance {
     pub position: glam::Vec3,
     pub rotation: glam::Quat,
 }
 
-impl Instance {
+impl DemoInstance {
     pub fn new(position: glam::Vec3, rotation: glam::Quat) -> Self {
         Self { position, rotation }
     }
@@ -20,17 +22,29 @@ impl Instance {
     }
 }
 
+// pub trait Instanced {
+//     type Instance: Pod + Vertex;
+
+//     fn pipeline_id() -> &'static str;
+//     fn instances(scene: &SceneGraph) -> Vec<Self::Instance>;
+//     fn draw();
+// }
+
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-pub struct RawInstance {
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct Instance {
     pub transform_index: u32,
-    pub material_index: u32,
+    pub normal_index: u32,
 }
 
-impl RawInstance {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+impl Instance {
+    pub const STRIDE: usize = std::mem::size_of::<Self>();
+}
+
+impl Vertex for Instance {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            array_stride: Self::STRIDE as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -39,7 +53,7 @@ impl RawInstance {
                     format: wgpu::VertexFormat::Uint32,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<u32>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<u32>() as u64,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Uint32,
                 },
@@ -47,24 +61,6 @@ impl RawInstance {
         }
     }
 }
-
-// pub struct Instances {
-//     pub data: Vec<RawInstance>,
-//     pub buffer: wgpu::Buffer,
-// }
-
-// impl Instances {
-//     pub fn new(instances: &[Instance], context: &RenderContext) -> Self {
-//         let data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-//         let buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-//             label: Some("Instance buffer"),
-//             contents: bytemuck::cast_slice(&data),
-//             usage: wgpu::BufferUsages::VERTEX,
-//         });
-
-//         Self { data, buffer }
-//     }
-// }
 
 pub struct InstancePool {
     pub buffer: wgpu::Buffer,
@@ -76,29 +72,31 @@ impl InstancePool {
     pub fn new(capacity: usize, context: &RenderContext) -> Self {
         let buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance pool"),
-            size: (capacity * std::mem::size_of::<RawInstance>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            size: (capacity * Instance::STRIDE) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         Self {
             buffer,
             capacity: capacity.max(1),
-            cursor: 0,        
-        }        
-    }   
+            cursor: 0,
+        }
+    }
 
-    pub fn upload(&mut self, instances: &[RawInstance], context: &RenderContext) -> usize {
+    pub fn upload(&mut self, instances: &[Instance], context: &RenderContext) -> usize {
         let size = instances.len();
         if self.cursor + size > self.capacity {
             self.cursor = 0;
         }
 
-        let offset = (self.cursor * std::mem::size_of::<RawInstance>()) as u64;        
-        context.queue.write_buffer(&self.buffer, offset, bytemuck::cast_slice(instances));
-        
+        let offset = (self.cursor * Instance::STRIDE) as u64;
+        context
+            .queue
+            .write_buffer(&self.buffer, offset, bytemuck::cast_slice(instances));
+
         let start_offset = self.cursor;
-        self.cursor += size;
+        self.cursor = start_offset + size % self.capacity;
 
         start_offset
     }
