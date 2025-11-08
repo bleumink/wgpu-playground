@@ -49,13 +49,67 @@ where
     }
 }
 
+fn index_to_position(positions: &[glam::Vec3], indices: &[u32]) -> [glam::Vec3; 3] {
+        let v0 = positions[indices[0] as usize];
+        let v1 = positions[indices[0] as usize];
+        let v2 = positions[indices[0] as usize];                    
+
+        [v0, v1, v2]
+} 
+
+fn iter_normals(positions: &[glam::Vec3], indices: &[u32]) -> impl Iterator<Item = glam::Vec3> {
+    indices.chunks_exact(3).map(|index| {
+        let [v0, v1, v2] = index_to_position(positions, index);
+        (v1 - v0).cross(v2 - v0).normalize_or_zero()
+    })
+}
+
+fn iter_tangents(positions: &[glam::Vec3], normals: &[glam::Vec3], indices: &[u32], uvs: &[TextureCoordinate]) -> impl Iterator<Item = glam::Vec4> {
+    let tangents = indices.chunks_exact(3)
+        .map(|index| {
+            let [v0, v1, v2] = index_to_position(positions, index);
+
+            let uv0 = uvs[index[0] as usize].to_vec();
+            let uv1 = uvs[index[1] as usize].to_vec();
+            let uv2 = uvs[index[2] as usize].to_vec();
+
+            let delta_pos1 = v1 - v0;
+            let delta_pos2 = v2 - v0;
+
+            let delta_uv1 = uv1 - uv0;
+            let delta_uv2 = uv2 - uv0;
+
+            let r = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x);   
+            let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;
+            let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * -r;
+            (tangent, bitangent)
+        });
+    
+    tangents
+        .zip(normals)
+        .map(|((tangent, bitangent), normal)| {
+            let t = (tangent - normal * normal.dot(tangent)).normalize_or_zero();
+            let w = if normal.cross(t).dot(bitangent) < 0.0 { -1.0 } else { 1.0 };
+            glam::Vec4::new(t.x, t.y, t.z, w)
+        })                    
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
-    pub tangent: [f32; 3],
-    pub bitangent: [f32; 3],
+    pub tangent: [f32; 4],
+}
+
+impl MeshVertex {
+    pub fn new(position: glam::Vec3, normal: glam::Vec3, tangent: glam::Vec4) -> Self {
+        Self {
+            position: [position.x, position.y, position.z],
+            normal: [normal.x, normal.y, normal.z],
+            tangent: tangent.to_array(),
+        }
+    }
 }
 
 impl Vertex for MeshVertex {
@@ -70,20 +124,15 @@ impl Vertex for MeshVertex {
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: 12,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
+                    offset: 24,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x4,
                 },                
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 9]>() as wgpu::BufferAddress,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
             ],
         }
     }
@@ -92,6 +141,16 @@ impl Vertex for MeshVertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct TextureCoordinate([f32; 2]);
+impl TextureCoordinate {
+    fn new(uv_coordinates: [f32; 2]) -> Self {
+        Self(uv_coordinates)
+    }    
+
+    fn from_slice(uv_coordinates: &[f32]) -> Self {
+        Self([uv_coordinates[0], uv_coordinates[1]])
+    }
+}
+
 impl Vertex for TextureCoordinate {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -565,11 +624,12 @@ impl SceneBuffer {
 
         let scene = gltf.default_scene().unwrap_or_else(|| gltf.scenes().next().unwrap());
 
+        
         let mut node_headers = Vec::new();
-        let mut primitive_headers = Vec::new();
-        let mut uv_headers = Vec::new();
+        let mut primitive_headers = Vec::new();        
+        let mut uv_headers: Vec<TexCoordHeader> = Vec::new();
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
+        let mut indices = Vec::new();        
         let mut uv_sets = Vec::new();
 
         for node in scene.nodes() {
@@ -582,42 +642,7 @@ impl SceneBuffer {
                     primitive_header_offset: std::mem::size_of::<PrimitiveHeader>() * primitive_headers.len(),
                     primitive_count: mesh.primitives().len(),
                 });
-
-                fn index_to_position(positions: &[glam::Vec3], indices: &[u32]) -> [glam::Vec3; 3] {
-                        let v0 = positions[indices[0] as usize];
-                        let v1 = positions[indices[0] as usize];
-                        let v2 = positions[indices[0] as usize];                    
-
-                        [v0, v1, v2]
-                } 
-
-                fn iter_normals(positions: &[glam::Vec3], indices: &[u32]) -> impl Iterator<Item = glam::Vec3> {
-                    indices.chunks_exact(3).map(|index| {
-                        let [v0, v1, v2] = index_to_position(positions, index);
-                        (v1 - v0).cross(v2 - v0).normalize_or_zero()
-                    })
-                }
-
-                fn iter_tangents(positions: &[glam::Vec3], normals: &[glam::Vec3], indices: &[u32], uvs: &[TextureCoordinate]) -> impl Iterator<Item = glam::Vec4> {
-                    indices.chunks_exact(3)
-                        .map(|index| {
-                            let [v0, v1, v2] = index_to_position(positions, index);
-
-                            let uv0 = uvs[index[0] as usize].to_vec();
-                            let uv1 = uvs[index[1] as usize].to_vec();
-                            let uv2 = uvs[index[2] as usize].to_vec();
-
-                            let delta_pos1 = v1 - v0;
-                            let delta_pos2 = v2 - v0;
-
-                            let delta_uv1 = uv1 - uv0;
-                            let delta_uv2 = uv2 - uv0;
-
-                            let r = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x);   
-                            let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;                            
-                        })
-                }
-
+                
                 for primitive in mesh.primitives() {
                     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
@@ -626,7 +651,7 @@ impl SceneBuffer {
                         if let Some(uv_reader) = reader.read_tex_coords(set_index) {
                             let uv_set = uv_reader
                                 .into_f32()
-                                .map(|[u, v]| TextureCoordinate([u, v]))
+                                .map(|uv| TextureCoordinate::new(uv))
                                 .collect::<Vec<_>>();
                             let header = TexCoordHeader {
                                 offset: std::mem::size_of::<TextureCoordinate>() * uv_sets.len(),
@@ -655,28 +680,17 @@ impl SceneBuffer {
                         .map(|iter| iter.map(glam::Vec3::from_array).collect())
                         .unwrap_or_else(|| iter_normals(&positions, &indices).collect());
 
-                    let tangents: Vec<glam::Vec3> = reader
+                    let uv_slice = &uv_sets[..uv_headers[0].count];
+                    let tangents: Vec<glam::Vec4> = reader
                         .read_tangents()
-                        .map(|iter| iter.collect())
-                        .unwrap_or_else(|| iter_tangents(&positions, &uv_sets[0], &indices));
-
-                    let bitangents = tangents
-                        .iter()
-                        .zip(&normals)
-                        .map(|(tangent, normal)| normal.cross(*tangent).normalize_or_zero())
-                        .collect::<Vec<_>>();
+                        .map(|iter| iter.map(glam::Vec4::from_array).collect())
+                        .unwrap_or_else(|| iter_tangents(&positions, &normals, &indices, uv_slice).collect());
 
                     let primitive_vertices = positions
                         .into_iter()
                         .zip(normals)
                         .zip(tangents)
-                        .zip(bitangents)
-                        .map(|(((position, normal), tangents), bitangent)| MeshVertex {
-                            position,
-                            normal: normal.to_array(),
-                            tangent: tangent.to_array(),
-                            bitangent: bitangent.to_array(),
-                        })
+                        .map(|((position, normal), tangent)| MeshVertex::new(position, normal, tangent))
                         .collect::<Vec<_>>();
 
                     let header = PrimitiveHeader {
@@ -795,39 +809,68 @@ impl SceneBuffer {
                     primitive_count: 1,
                 });
 
-                let (model_vertices, tex_coords): (Vec<_>, Vec<_>) = (0..model.mesh.positions.len() / 3)
-                    .map(|i| {
-                        if model.mesh.normals.is_empty() {
-                            (
-                                MeshVertex {
-                                    position: [
-                                        model.mesh.positions[i * 3],
-                                        model.mesh.positions[i * 3 + 1],
-                                        model.mesh.positions[i * 3 + 2],
-                                    ],
-                                    normal: [0.0, 0.0, 0.0],
-                                },
-                                TextureCoordinate([model.mesh.texcoords[i * 2], 1.0 - model.mesh.texcoords[i * 2 + 1]]),
-                            )
-                        } else {
-                            (
-                                MeshVertex {
-                                    position: [
-                                        model.mesh.positions[i * 3],
-                                        model.mesh.positions[i * 3 + 1],
-                                        model.mesh.positions[i * 3 + 2],
-                                    ],
-                                    normal: [
-                                        model.mesh.normals[i * 3],
-                                        model.mesh.normals[i * 3 + 1],
-                                        model.mesh.normals[i * 3 + 2],
-                                    ],
-                                },
-                                TextureCoordinate([model.mesh.texcoords[i * 2], 1.0 - model.mesh.texcoords[i * 2 + 1]]),
-                            )
-                        }
-                    })
-                    .unzip();
+                // let (model_vertices, tex_coords): (Vec<_>, Vec<_>) = (0..model.mesh.positions.len() / 3)
+                //     .map(|i| {
+                //         if model.mesh.normals.is_empty() {
+                //             (
+                //                 MeshVertex {
+                //                     position: [
+                //                         model.mesh.positions[i * 3],
+                //                         model.mesh.positions[i * 3 + 1],
+                //                         model.mesh.positions[i * 3 + 2],
+                //                     ],
+                //                     normal: [0.0, 0.0, 0.0],
+                //                 },
+                //                 TextureCoordinate([model.mesh.texcoords[i * 2], 1.0 - model.mesh.texcoords[i * 2 + 1]]),
+                //             )
+                //         } else {
+                //             (
+                //                 MeshVertex {
+                //                     position: [
+                //                         model.mesh.positions[i * 3],
+                //                         model.mesh.positions[i * 3 + 1],
+                //                         model.mesh.positions[i * 3 + 2],
+                //                     ],
+                //                     normal: [
+                //                         model.mesh.normals[i * 3],
+                //                         model.mesh.normals[i * 3 + 1],
+                //                         model.mesh.normals[i * 3 + 2],
+                //                     ],
+                //                 },
+                //                 TextureCoordinate([model.mesh.texcoords[i * 2], 1.0 - model.mesh.texcoords[i * 2 + 1]]),
+                //             )
+                //         }
+                //     })
+                //     .unzip();
+
+                let positions = model.mesh.positions
+                    .chunks_exact(3)
+                    .map(|vertices| glam::Vec3::from_slice(vertices))
+                    .collect::<Vec<_>>();
+
+                let tex_coords = model.mesh.texcoords
+                    .chunks_exact(2)
+                    .map(|uvs| TextureCoordinate::from_slice(uvs))
+                    .collect::<Vec<_>>();
+
+                let normals = if model.mesh.normals.is_empty() {
+                    iter_normals(&positions, &model.mesh.indices).collect::<Vec<_>>()
+                } else {
+                    model.mesh.normals
+                        .chunks_exact(3)
+                        .map(|normals| glam::Vec3::from_slice(normals))
+                        .collect::<Vec<_>>()
+                };
+
+                let tangents = iter_tangents(&positions, &normals, &model.mesh.indices, &tex_coords)
+                    .collect::<Vec<_>>();
+
+                let model_vertices = positions
+                    .into_iter()
+                    .zip(normals)
+                    .zip(tangents)
+                    .map(|((position, normal), tangent)| MeshVertex::new(position, normal, tangent))
+                    .collect::<Vec<_>>();
 
                 let uv_header = TexCoordHeader {
                     offset: 0,
@@ -905,19 +948,6 @@ pub fn unit_cube() -> (Vec<MeshVertex>, Vec<u32>, Vec<TextureCoordinate>) {
         (Vec3::new(-0.5, -0.5, 0.5), -Vec3::Y, Vec2::new(0.0, 1.0)),
     ];
 
-    let (vertices, uv_set): (Vec<MeshVertex>, Vec<TextureCoordinate>) = positions
-        .iter()
-        .map(|(pos, normal, uv)| {
-            (
-                MeshVertex {
-                    position: pos.to_array(),
-                    normal: normal.to_array(),
-                },
-                TextureCoordinate(uv.to_array()),
-            )
-        })
-        .collect();
-
     // 12 triangles (2 per face)
     let indices: Vec<u32> = vec![
         0, 1, 2, 2, 3, 0, // front
@@ -927,6 +957,32 @@ pub fn unit_cube() -> (Vec<MeshVertex>, Vec<u32>, Vec<TextureCoordinate>) {
         16, 17, 18, 18, 19, 16, // top
         20, 21, 22, 22, 23, 20, // bottom
     ];
+    
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut tangents = Vec::new();
+    for (pos, normal, uv) in positions {
+        vertices.push(pos);
+        normals.push(normal);
+        uvs.push(TextureCoordinate(uv.to_array()));
+        tangents.push(glam::Vec4::ZERO);
+    }
+
+    // let tangents = iter_tangents(&vertices, &normals, &indices, &uvs).collect::<Vec<_>>();
+
+    let (vertices, uv_set): (Vec<MeshVertex>, Vec<TextureCoordinate>) = positions
+        .into_iter()
+        .zip(tangents)
+        .map(|((pos, normal, uv), tangent)| {
+            (
+                MeshVertex::new(pos, normal, tangent),
+                TextureCoordinate(uv.to_array()),                
+            )
+        })
+        .collect();
+
+
 
     (vertices, indices, uv_set)
 }

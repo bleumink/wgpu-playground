@@ -2,27 +2,27 @@
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) tangent: vec4<f32>,
-    @location(3) bitangent: vec3<f32>,
-    @location(4) uv1: vec2<f32>,
-    @location(5) uv2: vec2<f32>,
-    @location(6) uv3: vec2<f32>,
-    @location(7) uv4: vec2<f32>,
-    @location(8) uv5: vec2<f32>,
-    @location(9) uv6: vec2<f32>,
+    @location(2) tangent: vec4<f32>,    
+    @location(3) uv1: vec2<f32>,
+    @location(4) uv2: vec2<f32>,
+    @location(5) uv3: vec2<f32>,
+    @location(6) uv4: vec2<f32>,
+    @location(7) uv5: vec2<f32>,
+    @location(8) uv6: vec2<f32>,
 }
 
 struct InstanceInput {
-    @location(8) transform_index: u32, 
-    @location(9) normal_index: u32,
+    @location(9) transform_index: u32, 
+    @location(10) normal_index: u32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
     @location(1) normal: vec3<f32>,    
-    @location(2) tex_coords: vec2<f32>,
-    @location(3) view_position: vec3<f32>,
+    @location(2) tangent: vec4<f32>,
+    @location(3) tex_coords: vec2<f32>,
+    @location(4) view_position: vec3<f32>,
 }
 
 struct CameraUniform {
@@ -71,11 +71,12 @@ fn vs_main(
     let normal_matrix = mat4_to_mat3(normals[instance.normal_index].matrix);
     
     let world_position = model * vec4<f32>(mesh.position, 1.0);    
-    let world_normal =  normalize(normal_matrix * mesh.normal);
+    let world_normal =  normal_matrix * mesh.normal;
 
     var out: VertexOutput;
     out.world_position = world_position.xyz;
     out.normal = world_normal;
+    out.tangent = mesh.tangent;
     out.tex_coords = mesh.uv1;
     out.view_position = camera.view_position.xyz;
     out.clip_position = camera.view_projection * world_position;

@@ -3,18 +3,19 @@
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) uv1: vec2<f32>,
-    @location(3) uv2: vec2<f32>,
-    @location(4) uv3: vec2<f32>,
-    @location(5) uv4: vec2<f32>,
-    @location(6) uv5: vec2<f32>,
-    @location(7) uv6: vec2<f32>,
+    @location(2) tangent: vec4<f32>,
+    @location(3) uv1: vec2<f32>,
+    @location(4) uv2: vec2<f32>,
+    @location(5) uv3: vec2<f32>,
+    @location(6) uv4: vec2<f32>,
+    @location(7) uv5: vec2<f32>,
+    @location(8) uv6: vec2<f32>,
     
 }
 
 struct InstanceInput {
-    @location(8) transform_index: u32, 
-    @location(9) normal_index: u32,
+    @location(9) transform_index: u32, 
+    @location(10) normal_index: u32,
 }
 
 struct VertexOutput {
