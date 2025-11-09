@@ -1,21 +1,23 @@
 use bytemuck::{Pod, Zeroable};
 use gltf::{
-    image::Format as GltfImageFormat,
-    texture::{MagFilter, MinFilter, WrappingMode},
+    animation::util::morph_target_weights::F32, image::Format as GltfImageFormat, texture::{MagFilter, MinFilter, WrappingMode}
 };
 use image::GenericImageView;
 
-use crate::{context::RenderContext, material::MaterialView};
-
-#[repr(transparent)]
+#[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
-pub struct TextureFormat(pub usize);
+pub struct TextureFormat {
+    kind: u32,
+    srgb: u32,
+}
 
 impl TextureFormat {
-    pub const RGBA8: Self = Self(0);
-    pub const RGB8: Self = Self(1);
-    pub const RG8: Self = Self(2);
-    pub const R8: Self = Self(3);
+    pub const RGBA8: Self = Self { kind: 0, srgb: 0 };
+    pub const RGB8: Self = Self { kind: 1, srgb: 0 };
+    pub const RG8: Self = Self { kind: 2, srgb: 0 };
+    pub const R8: Self = Self { kind: 3, srgb: 0 };
+    pub const RGBA8_SRGB: Self = Self { kind: 0, srgb: 1 };
+    pub const RGB8_SRGB:  Self = Self { kind: 1, srgb: 1 };
 
     fn make_image<F, P>(width: u32, height: u32, data: &[u8], func: F) -> Option<image::DynamicImage>
     where
@@ -37,10 +39,22 @@ impl TextureFormat {
 
     pub fn to_image(self, width: u32, height: u32, data: &[u8]) -> Option<image::DynamicImage> {
         match self {
-            Self::RGBA8 => Self::make_image(width, height, data, image::DynamicImage::ImageRgba8),
-            Self::RGB8 => Self::make_image(width, height, data, image::DynamicImage::ImageRgb8),
+            Self::RGBA8 | Self::RGBA8_SRGB => Self::make_image(width, height, data, image::DynamicImage::ImageRgba8),
+            Self::RGB8 | Self::RGB8_SRGB => Self::make_image(width, height, data, image::DynamicImage::ImageRgb8),
             Self::RG8 => Self::make_image(width, height, data, image::DynamicImage::ImageLumaA8),
             Self::R8 => Self::make_image(width, height, data, image::DynamicImage::ImageLuma8),
+            _ => panic!("Unsupported texture format"),
+        }
+    }
+
+    pub fn to_wgpu(self) -> wgpu::TextureFormat {
+        match self {
+            Self::RGBA8_SRGB => wgpu::TextureFormat::Rgba8UnormSrgb,
+            Self::RGB8_SRGB => wgpu::TextureFormat::Rgba8UnormSrgb,
+            Self::RGBA8 => wgpu::TextureFormat::Rgba8Unorm,
+            Self::RGB8 => wgpu::TextureFormat::Rgba8Unorm,
+            Self::RG8 => wgpu::TextureFormat::Rg8Unorm,
+            Self::R8 => wgpu::TextureFormat::R8Unorm,
             _ => panic!("Unsupported texture format"),
         }
     }
@@ -192,6 +206,7 @@ impl Texture {
             queue,
             &data,
             size,
+            wgpu::TextureFormat::Rgba8Unorm,
             &Sampler::default().desc(),
             Some("placeholder"),
         )
@@ -199,6 +214,7 @@ impl Texture {
 
     pub fn from_view(device: &wgpu::Device, queue: &wgpu::Queue, view: &TextureView, label: Option<&str>) -> Self {
         let image = view.to_image().unwrap();
+        let format = view.format.to_wgpu();
         let data = image.to_rgba8();
         let dimensions = image.dimensions();
         let size = wgpu::Extent3d {
@@ -206,8 +222,7 @@ impl Texture {
             height: dimensions.1,
             depth_or_array_layers: 1,
         };
-
-        Self::from_bytes(device, queue, &data, size, &view.sampler.desc(), label)
+        Self::from_bytes(device, queue, &data, size, format, &view.sampler.desc(), label)
     }
 
     pub fn from_bytes(
@@ -215,6 +230,7 @@ impl Texture {
         queue: &wgpu::Queue,
         data: &[u8],
         size: wgpu::Extent3d,
+        format: wgpu::TextureFormat,
         sampler_desc: &wgpu::SamplerDescriptor,
         label: Option<&str>,
     ) -> Self {
@@ -224,7 +240,7 @@ impl Texture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

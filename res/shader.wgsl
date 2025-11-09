@@ -72,7 +72,7 @@ fn vs_main(
     
     let world_position = model * vec4<f32>(mesh.position, 1.0);    
     let world_normal =  normal_matrix * mesh.normal;
-    let world_tangent = vec4<f32>(normalize(normal_matrix * mesh.tangent.xyz), mesh.tangent.w);
+    let world_tangent = vec4<f32>(normal_matrix * mesh.tangent.xyz, mesh.tangent.w);
 
     var out: VertexOutput;
     out.world_position = world_position.xyz;
@@ -102,28 +102,28 @@ struct LightModel {
     direction: vec3<f32>,
 }
 
-@group(0) @binding(0) var<uniform> materialUniform: MaterialUniform;
-@group(0) @binding(1) var baseColorTexture: texture_2d<f32>;
-@group(0) @binding(2) var baseColorSampler: sampler;
-@group(0) @binding(3) var metallicRoughnessTexture: texture_2d<f32>;
-@group(0) @binding(4) var metallicRoughnessSampler: sampler;
-@group(0) @binding(5) var normalTexture: texture_2d<f32>;
-@group(0) @binding(6) var normalSampler: sampler;
-@group(0) @binding(7) var occlusionTexture: texture_2d<f32>;
-@group(0) @binding(8) var occlusionSampler: sampler;
-@group(0) @binding(9) var emissiveTexture: texture_2d<f32>;
-@group(0) @binding(10) var emissiveSampler: sampler;
+@group(0) @binding(0) var<uniform> material: MaterialUniform;
+@group(0) @binding(1) var base_color_texture: texture_2d<f32>;
+@group(0) @binding(2) var base_color_sampler: sampler;
+@group(0) @binding(3) var mr_texture: texture_2d<f32>;
+@group(0) @binding(4) var mr_sampler: sampler;
+@group(0) @binding(5) var normal_texture: texture_2d<f32>;
+@group(0) @binding(6) var normal_sampler: sampler;
+@group(0) @binding(7) var occlusion_texture: texture_2d<f32>;
+@group(0) @binding(8) var occlusion_sampler: sampler;
+@group(0) @binding(9) var emissive_texture: texture_2d<f32>;
+@group(0) @binding(10) var emissive_sampler: sampler;
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {        
-    let n = normalize(in.normal);
-    let t = normalize(in.tangent);
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {       
+    let normal_sample = textureSample(normal_texture, normal_sampler, in.tex_coords).rgb;
+    let n = get_normal_from_map(normal_sample, in.normal, in.tangent, material.normal_scale);
     let v = normalize(in.view_position - in.world_position);
     
-    let base_color_sample = textureSample(baseColorTexture, baseColorSampler, in.tex_coords).rgb;
+    let base_color_sample = textureSample(base_color_texture, base_color_sampler, in.tex_coords).rgb;
     let albedo = pow(base_color_sample, vec3<f32>(2.2));
     
-    let mr_sample = textureSample(metallicRoughnessTexture, metallicRoughnessSampler, in.tex_coords).rgb;
+    let mr_sample = textureSample(mr_texture, mr_sampler, in.tex_coords).rgb;
     let metallic = mr_sample.b;
     let roughness = clamp(mr_sample.g, 0.04, 1.0);
     
@@ -193,6 +193,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let mapped = color / (color + vec3<f32>(1.0));
     let out = pow(mapped, vec3<f32>(1.0 / 2.2));
     // return vec4<f32>(n * 0.5 + 0.5, 1.0);    
+
     return vec4<f32>(out, 1.0);    
 }
 
@@ -241,10 +242,13 @@ fn geometry_smith(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f
     return ggx1 * ggx2;
 }
 
-fn getNormalFromMap(normalTexSample: vec3<f32>, normal: vec3<f32>, tangent: vec3<f32>, bitangent: vec3<f32>) -> vec3<f32> {
-    let n = normalize(normalTexSample * 2.0 - 1.0);
-    let t = normalize(tangent);
-    let b = normalize(bitangent);
-    let tbn = mat3x3<f32>(t, b, normal);
-    return normalize(tbn * n);
+fn get_normal_from_map(normal_sample: vec3<f32>, normal: vec3<f32>, tangent: vec4<f32>, scale: f32) -> vec3<f32> {
+    let n = normalize(normal);
+    let t = normalize(tangent.xyz);
+    let b = normalize(cross(n, t) * tangent.w);
+
+    let normal_tangent = normalize((normal_sample * 2.0 - 1.0) * scale);
+    let tbn = mat3x3<f32>(t, b, n);
+
+    return normalize(tbn * normal_tangent);
 }

@@ -24,6 +24,7 @@ impl TextureInstanceSlot {
 pub struct MaterialUniform {
     pub base_color_factor: [f32; 4],
     pub emissive_factor: [f32; 3],
+    _padding0: u32,
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub occlusion_strength: f32,
@@ -31,6 +32,8 @@ pub struct MaterialUniform {
     pub alpha_cutoff: f32,
     pub alpha_mode: u32,
     pub double_sided: u32,
+    _padding1: u32,
+
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +82,8 @@ impl Material {
             alpha_cutoff: material.alpha_cutoff,
             alpha_mode: material.alpha_mode as u32,
             double_sided: material.double_sided as u32,
+            _padding0: 0,
+            _padding1: 0,
         };
 
         let uniform_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
