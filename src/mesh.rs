@@ -57,41 +57,53 @@ fn index_to_position(positions: &[glam::Vec3], indices: &[u32]) -> [glam::Vec3; 
         [v0, v1, v2]
 } 
 
-fn iter_normals(positions: &[glam::Vec3], indices: &[u32]) -> impl Iterator<Item = glam::Vec3> {
+fn calculate_normals(positions: &[glam::Vec3], indices: &[u32]) -> Vec<glam::Vec3> {
     indices.chunks_exact(3).map(|index| {
         let [v0, v1, v2] = index_to_position(positions, index);
         (v1 - v0).cross(v2 - v0).normalize_or_zero()
     })
+    .collect()
 }
 
-fn iter_tangents(positions: &[glam::Vec3], normals: &[glam::Vec3], indices: &[u32], uvs: &[TextureCoordinate]) -> impl Iterator<Item = glam::Vec4> {
-    let tangents = indices.chunks_exact(3)
-        .map(|index| {
-            let [v0, v1, v2] = index_to_position(positions, index);
-
-            let uv0 = uvs[index[0] as usize].to_vec();
-            let uv1 = uvs[index[1] as usize].to_vec();
-            let uv2 = uvs[index[2] as usize].to_vec();
-
-            let delta_pos1 = v1 - v0;
-            let delta_pos2 = v2 - v0;
-
-            let delta_uv1 = uv1 - uv0;
-            let delta_uv2 = uv2 - uv0;
-
-            let r = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x);   
-            let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;
-            let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * -r;
-            (tangent, bitangent)
-        });
+fn calculate_tangents(positions: &[glam::Vec3], normals: &[glam::Vec3], indices: &[u32], uvs: &[TextureCoordinate]) -> Vec<glam::Vec4> {
+    let mut tangents  = vec![glam::Vec3::ZERO; positions.len()];
+    let mut bitangents = vec![glam::Vec3::ZERO; positions.len()];
     
+    for index in indices.chunks_exact(3) {
+        let [v0, v1, v2] = index_to_position(positions, index);
+
+        let uv0 = uvs[index[0] as usize].to_vec();
+        let uv1 = uvs[index[1] as usize].to_vec();
+        let uv2 = uvs[index[2] as usize].to_vec();
+
+        let delta_pos1 = v1 - v0;
+        let delta_pos2 = v2 - v0;
+
+        let delta_uv1 = uv1 - uv0;
+        let delta_uv2 = uv2 - uv0;
+
+        let r = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x);   
+        let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;
+        let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * -r;
+        
+        tangents[index[0] as usize] = tangent;
+        tangents[index[1] as usize] = tangent;
+        tangents[index[2] as usize] = tangent;
+
+        bitangents[index[0] as usize] = bitangent;
+        bitangents[index[1] as usize] = bitangent;
+        bitangents[index[2] as usize] = bitangent;
+    }        
+
     tangents
+        .into_iter()
+        .zip(bitangents)
         .zip(normals)
-        .map(|((tangent, bitangent), normal)| {
-            let t = (tangent - normal * normal.dot(tangent)).normalize_or_zero();
-            let w = if normal.cross(t).dot(bitangent) < 0.0 { -1.0 } else { 1.0 };
-            glam::Vec4::new(t.x, t.y, t.z, w)
-        })                    
+        .map(|((tangent, bitangent), normal)| {            
+            let w = if normal.cross(tangent).dot(bitangent) < 0.0 { -1.0 } else { 1.0 };
+            glam::Vec4::new(tangent.x, tangent.y, tangent.z, w)
+        })
+        .collect()        
 }
 
 #[repr(C)]
@@ -645,8 +657,8 @@ impl SceneBuffer {
                 
                 for primitive in mesh.primitives() {
                     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-
                     let mut primitive_uv_headers = Vec::new();
+                    
                     for set_index in 0..6 {
                         if let Some(uv_reader) = reader.read_tex_coords(set_index) {
                             let uv_set = uv_reader
@@ -660,10 +672,13 @@ impl SceneBuffer {
 
                             primitive_uv_headers.push(header);
                             uv_sets.extend(uv_set);
-                        } else {
+                        } else {                            
                             break;
                         }
                     }
+                                        
+                    let uv_set_count = primitive_uv_headers.len();
+                    uv_headers.extend(primitive_uv_headers);                    
 
                     let primitive_indices: Vec<u32> = reader
                         .read_indices()
@@ -678,13 +693,13 @@ impl SceneBuffer {
                     let normals: Vec<glam::Vec3> = reader
                         .read_normals()
                         .map(|iter| iter.map(glam::Vec3::from_array).collect())
-                        .unwrap_or_else(|| iter_normals(&positions, &indices).collect());
+                        .unwrap_or_else(|| calculate_normals(&positions, &indices));
 
                     let uv_slice = &uv_sets[..uv_headers[0].count];
                     let tangents: Vec<glam::Vec4> = reader
                         .read_tangents()
                         .map(|iter| iter.map(glam::Vec4::from_array).collect())
-                        .unwrap_or_else(|| iter_tangents(&positions, &normals, &indices, uv_slice).collect());
+                        .unwrap_or_else(|| calculate_tangents(&positions, &normals, &indices, uv_slice));
 
                     let primitive_vertices = positions
                         .into_iter()
@@ -699,12 +714,11 @@ impl SceneBuffer {
                         index_offset: std::mem::size_of::<u32>() * indices.len(),
                         index_count: primitive_indices.len(),
                         uv_header_offset: std::mem::size_of::<TexCoordHeader>() * uv_headers.len(),
-                        uv_set_count: primitive_uv_headers.len(),
+                        uv_set_count,
                         material_index: primitive.material().index().unwrap_or(0),
                     };
 
-                    primitive_headers.push(header);
-                    uv_headers.extend(primitive_uv_headers);
+                    primitive_headers.push(header);                    
                     vertices.extend(primitive_vertices);
                     indices.extend(primitive_indices);
                 }
@@ -854,7 +868,7 @@ impl SceneBuffer {
                     .collect::<Vec<_>>();
 
                 let normals = if model.mesh.normals.is_empty() {
-                    iter_normals(&positions, &model.mesh.indices).collect::<Vec<_>>()
+                    calculate_normals(&positions, &model.mesh.indices)
                 } else {
                     model.mesh.normals
                         .chunks_exact(3)
@@ -862,8 +876,7 @@ impl SceneBuffer {
                         .collect::<Vec<_>>()
                 };
 
-                let tangents = iter_tangents(&positions, &normals, &model.mesh.indices, &tex_coords)
-                    .collect::<Vec<_>>();
+                let tangents = calculate_tangents(&positions, &normals, &model.mesh.indices, &tex_coords);
 
                 let model_vertices = positions
                     .into_iter()
@@ -961,16 +974,15 @@ pub fn unit_cube() -> (Vec<MeshVertex>, Vec<u32>, Vec<TextureCoordinate>) {
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
-    let mut tangents = Vec::new();
+    
     for (pos, normal, uv) in positions {
         vertices.push(pos);
         normals.push(normal);
-        uvs.push(TextureCoordinate(uv.to_array()));
-        tangents.push(glam::Vec4::ZERO);
+        uvs.push(TextureCoordinate(uv.to_array()));    
     }
 
-    // let tangents = iter_tangents(&vertices, &normals, &indices, &uvs).collect::<Vec<_>>();
-
+    let tangents = calculate_tangents(&vertices, &normals, &indices, &uvs);
+    log::info!("{:?}", tangents);
     let (vertices, uv_set): (Vec<MeshVertex>, Vec<TextureCoordinate>) = positions
         .into_iter()
         .zip(tangents)
@@ -981,8 +993,6 @@ pub fn unit_cube() -> (Vec<MeshVertex>, Vec<u32>, Vec<TextureCoordinate>) {
             )
         })
         .collect();
-
-
 
     (vertices, indices, uv_set)
 }

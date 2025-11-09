@@ -72,11 +72,12 @@ fn vs_main(
     
     let world_position = model * vec4<f32>(mesh.position, 1.0);    
     let world_normal =  normal_matrix * mesh.normal;
+    let world_tangent = vec4<f32>(normalize(normal_matrix * mesh.tangent.xyz), mesh.tangent.w);
 
     var out: VertexOutput;
     out.world_position = world_position.xyz;
     out.normal = world_normal;
-    out.tangent = mesh.tangent;
+    out.tangent = world_tangent;
     out.tex_coords = mesh.uv1;
     out.view_position = camera.view_position.xyz;
     out.clip_position = camera.view_projection * world_position;
@@ -116,6 +117,7 @@ struct LightModel {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {        
     let n = normalize(in.normal);
+    let t = normalize(in.tangent);
     let v = normalize(in.view_position - in.world_position);
     
     let base_color_sample = textureSample(baseColorTexture, baseColorSampler, in.tex_coords).rgb;
@@ -190,7 +192,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Tone map and gamma correct
     let mapped = color / (color + vec3<f32>(1.0));
     let out = pow(mapped, vec3<f32>(1.0 / 2.2));
-    // return vec4<f32>(n * 0.5 + 0.5, 1.0);
+    // return vec4<f32>(n * 0.5 + 0.5, 1.0);    
     return vec4<f32>(out, 1.0);    
 }
 
