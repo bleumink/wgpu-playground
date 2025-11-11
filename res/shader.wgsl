@@ -71,8 +71,8 @@ fn vs_main(
     let normal_matrix = mat4_to_mat3(normals[instance.normal_index].matrix);
     
     let world_position = model * vec4<f32>(mesh.position, 1.0);    
-    let world_normal =  normal_matrix * mesh.normal;
-    let world_tangent = vec4<f32>(normal_matrix * mesh.tangent.xyz, mesh.tangent.w);
+    let world_normal =  normalize(normal_matrix * mesh.normal);
+    let world_tangent = vec4<f32>(normalize(normal_matrix * mesh.tangent.xyz), mesh.tangent.w);
 
     var out: VertexOutput;
     out.world_position = world_position.xyz;
@@ -243,8 +243,8 @@ fn geometry_smith(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f
 }
 
 fn get_normal_from_map(normal_sample: vec3<f32>, normal: vec3<f32>, tangent: vec4<f32>, scale: f32) -> vec3<f32> {
-    let n = normalize(normal);
-    let t = normalize(tangent.xyz);
+    let n = normal;
+    let t = tangent.xyz;
     let b = normalize(cross(n, t) * tangent.w);
 
     let normal_tangent = normalize((normal_sample * 2.0 - 1.0) * scale);

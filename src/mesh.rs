@@ -360,7 +360,7 @@ pub struct TextureHeader {
     pub size: usize,
     pub format: TextureFormat,
     pub width: u32,
-    pub height: u32,
+    pub height: u32,    
 }
 
 #[derive(Clone, Debug)]
@@ -577,7 +577,7 @@ impl SceneBuffer {
         let samplers: &[Sampler] = self.slice(scene_header.samplers_offset, scene_header.samplers_count);
         let raw_textures = self.slice(scene_header.texture_offset, scene_header.texture_size);
 
-        let create_texture_view = |texture_slot: Option<TextureSlot>| {
+        let create_texture_view = |texture_slot: Option<TextureSlot>, is_srgb: bool| {
             texture_slot.and_then(|slot| {
                 let header = texture_headers[slot.texture_index as usize];
                 let texture = &raw_textures[header.offset..header.offset + header.size];
@@ -589,6 +589,7 @@ impl SceneBuffer {
                     uv_index: slot.uv_index,
                     texture,
                     sampler,
+                    is_srgb,
                 };
 
                 Some(view)
@@ -596,11 +597,11 @@ impl SceneBuffer {
         };
 
         materials.iter().map(move |material| MaterialView {
-            base_color: create_texture_view(material.base_color),
-            metallic_roughness: create_texture_view(material.metallic_roughness),
-            normal: create_texture_view(material.normal),
-            occlusion: create_texture_view(material.occlusion),
-            emissive: create_texture_view(material.emissive),
+            base_color: create_texture_view(material.base_color, true),
+            metallic_roughness: create_texture_view(material.metallic_roughness, false),
+            normal: create_texture_view(material.normal, false),
+            occlusion: create_texture_view(material.occlusion, false),
+            emissive: create_texture_view(material.emissive, true),
             base_color_factor: material.base_color_factor,
             emissive_factor: material.emissive_factor,
             metallic_factor: material.metallic_factor,

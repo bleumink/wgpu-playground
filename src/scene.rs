@@ -54,7 +54,6 @@ pub struct NormalUniform([[f32; 4]; 4]);
 impl NormalUniform {
     pub fn new(transform: glam::Mat4) -> Self {
         let normal_matrix = transform.inverse().transpose();
-
         Self(normal_matrix.to_cols_array_2d())
     }
 }
