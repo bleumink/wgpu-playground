@@ -1,25 +1,20 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
 use crossbeam::channel::Sender;
 use instant::Instant;
-use serde::Deserialize;
-use serde::Serialize;
-use wasm_bindgen::JsCast;
-use wasm_bindgen::prelude::*;
+use js_sys::global;
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::DedicatedWorkerGlobalScope;
 
-use crate::asset::AssetBuffer;
-use crate::asset::AssetKind;
-use crate::asset::ResourcePath;
-use crate::asset::SerializableResourcePath;
-use crate::mesh::SceneBuffer;
-use crate::pointcloud::PointcloudBuffer;
-use crate::renderer::RenderCommand;
+use crate::renderer::asset::{AssetBuffer, AssetKind, SerializableResourcePath};
+use crate::renderer::mesh::SceneBuffer;
+use crate::renderer::pointcloud::PointcloudBuffer;
+use crate::renderer::{RenderCommand, ResourcePath};
 
 macro_rules! js_object {
     ({ $($key:literal : $value:expr),* $(,)? }) => {{

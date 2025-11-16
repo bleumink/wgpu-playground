@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
-use crate::{context::RenderContext, scene::SceneGraph, vertex::Vertex};
+use crate::renderer::{context::RenderContext, scene::SceneGraph, vertex::Vertex};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DemoInstance {

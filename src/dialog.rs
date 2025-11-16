@@ -1,5 +1,4 @@
-use crate::asset::AssetLoader;
-use crate::asset::ResourcePath;
+use crate::renderer::{AssetLoader, ResourcePath};
 
 fn create_dialog_future() -> impl Future<Output = Option<rfd::FileHandle>> {
     rfd::AsyncFileDialog::new()

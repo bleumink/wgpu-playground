@@ -11,7 +11,7 @@ use winit::{
 #[cfg(target_family = "wasm")]
 use wasm_bindgen::prelude::*;
 
-use crate::{renderer::Renderer, state::State, surface::Surface};
+use crate::state::State;
 
 #[cfg(target_family = "wasm")]
 fn get_canvas(canvas_id: &str) -> web_sys::HtmlCanvasElement {
@@ -64,8 +64,6 @@ impl ApplicationHandler<State> for App {
         }
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-        let (render_tx, render_rx) = crossbeam::channel::unbounded();
-        let (result_tx, result_rx) = crossbeam::channel::unbounded();
 
         #[cfg(not(target_family = "wasm"))]
         {
@@ -78,16 +76,7 @@ impl ApplicationHandler<State> for App {
             // let target_size = LogicalSize::new(size.width as f64 * scale, size.height as f64 * scale);
             // let _ = window.request_inner_size(target_size);
 
-            let (surface, context) = future::block_on(Surface::initialize(Arc::clone(&window))).unwrap();
-            let renderer = future::block_on(Renderer::new(context, render_rx, result_tx)).unwrap();
-
-            std::thread::spawn(move || {
-                if let Err(error) = renderer.run() {
-                    log::error!("Renderer encountered an error: {}", error);
-                }
-            });
-
-            let state = future::block_on(State::new(window, surface, render_tx, result_rx)).unwrap();
+            let state = future::block_on(State::new(window)).unwrap();
             self.state = Some(state);
         }
 
@@ -95,21 +84,9 @@ impl ApplicationHandler<State> for App {
         {
             if let Some(proxy) = self.proxy.take() {
                 wasm_bindgen_futures::spawn_local(async move {
-                    let (surface, context) = Surface::initialize(Arc::clone(&window))
-                        .await
-                        .expect("Unable to initialize surface");
-
-                    let renderer = Renderer::new(context, render_rx, result_tx)
-                        .await
-                        .expect("Unable to create renderer");
-
                     assert!(
                         proxy
-                            .send_event(
-                                State::new(window, surface, render_tx, result_rx, renderer)
-                                    .await
-                                    .expect("Unable to create canvas")
-                            )
+                            .send_event(State::new(window).await.expect("Unable to create canvas"))
                             .is_ok()
                     )
                 });

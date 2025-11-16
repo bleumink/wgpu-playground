@@ -1,12 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use crossbeam::channel::Sender;
-use egui::{ClippedPrimitive, Context, FullOutput, TexturesDelta};
+use egui::{ClippedPrimitive, Context, TexturesDelta};
 use egui_wgpu::ScreenDescriptor;
 use egui_winit::State;
 use winit::{event::WindowEvent, window::Window};
 
-use crate::{asset::AssetLoader, dialog::open_file_dialog, renderer::RenderCommand};
+use crate::{dialog::open_file_dialog, renderer::AssetLoader};
 
 pub struct UiData {
     pub textures_delta: TexturesDelta,

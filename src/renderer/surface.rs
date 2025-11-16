@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
-use crate::context::RenderContext;
+use crate::renderer::context::RenderContext;
 
 #[derive(Debug)]
 pub enum SurfaceState {

@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use gltf::material::AlphaMode;
 use wgpu::util::DeviceExt;
 
-use crate::{
+use crate::renderer::{
     context::RenderContext,
     texture::{Texture, TextureInstance, TextureView},
 };
@@ -33,7 +33,6 @@ pub struct MaterialUniform {
     pub alpha_mode: u32,
     pub double_sided: u32,
     _padding1: u32,
-
 }
 
 #[derive(Clone, Debug)]

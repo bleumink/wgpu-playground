@@ -1,6 +1,6 @@
 use std::cell::OnceCell;
 
-use crate::texture::Texture;
+use crate::renderer::texture::Texture;
 
 pub struct RenderContext {
     // pub window: Arc<Window>,
@@ -75,7 +75,7 @@ impl RenderContext {
         });
 
         let placeholder_texture = OnceCell::new();
-        let depth_texture = Texture::create_depth_texture(Some("Depth texture"), &device, &config);
+        let depth_texture = Texture::create_depth_texture(&device, &config, Some("Depth texture"));
 
         Ok(Self {
             // window,
@@ -99,6 +99,6 @@ impl RenderContext {
 
     pub fn resize(&mut self, config: wgpu::SurfaceConfiguration) {
         self.config = config;
-        self.depth_texture = Texture::create_depth_texture(Some("Depth texture"), &self.device, &self.config);
+        self.depth_texture = Texture::create_depth_texture(&self.device, &self.config, Some("Depth texture"));
     }
 }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use bytemuck::{Pod, Zeroable};
 use uuid::Uuid;
 
-use crate::{context::RenderContext, entity::EntityId};
+use crate::renderer::context::RenderContext;
 
 #[derive(Debug)]
 pub struct ComponentId<T>(u32, PhantomData<T>);

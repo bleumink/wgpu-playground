@@ -3,7 +3,7 @@ use std::{io::Cursor, ops::Range};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::{asset::ResourcePath, context::RenderContext, vertex::Vertex};
+use crate::renderer::{asset::ResourcePath, context::RenderContext, vertex::Vertex};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

@@ -1,31 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use crossbeam::channel::{Receiver, Sender};
 use instant::Instant;
-use uuid::Uuid;
-use winit::{event, event_loop::ActiveEventLoop, window::Window};
-
-#[cfg(target_family = "wasm")]
-use crate::renderer::Renderer;
+use winit::{event_loop::ActiveEventLoop, window::Window};
 
 use crate::{
-    asset::{AssetLoader, ResourcePath},
     camera::{Camera, CameraController, Projection},
     entity::{Entity, EntityId},
-    instance::DemoInstance,
-    light::Light,
-    renderer::{RenderCommand, RenderEvent, RenderId},
-    surface::{Surface, SurfaceState},
+    renderer::{AssetLoader, DemoInstance, Light, RenderCommand, RenderEvent, Renderer, ResourcePath},
     ui::Ui,
 };
 
-const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
-    1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-]);
-
 pub struct State {
     window: Arc<Window>,
-    surface: Surface,
     ui: Ui,
     camera: Camera,
     camera_controller: CameraController,
@@ -34,25 +20,40 @@ pub struct State {
     timestamp: Instant,
     is_running: bool,
     entities: HashMap<EntityId, Entity>,
-    render_tx: Sender<RenderCommand>,
-    result_rx: Receiver<RenderEvent>,
-    #[cfg(target_family = "wasm")]
     renderer: Renderer,
+    event_queue: Vec<RenderEvent>,
+    // frame_jobs: Vec<Box<dyn FnMut(&mut State, Duration)>>,
 }
 
 impl State {
     pub async fn new(
         window: Arc<Window>,
-        surface: Surface,
-        render_sender: Sender<RenderCommand>,
-        error_receiver: Receiver<RenderEvent>,
-        #[cfg(target_family = "wasm")] renderer: Renderer,
+        // renderer: Renderer,
+        // surface: Surface,
+        // render_sender: Sender<RenderCommand>,
+        // error_receiver: Receiver<RenderEvent>,
+        // #[cfg(target_family = "wasm")] renderer: Renderer,
     ) -> anyhow::Result<Self> {
+        let renderer = Renderer::new(Arc::clone(&window)).await;
+
+        // let mut frame_jobs: Vec<Box<dyn FnMut(&mut State, Duration)>> = Vec::new();
+        // let on_update = |state: &mut State, timestep: Duration| {
+        //     state.camera_controller.update_camera(&mut state.camera, timestep);
+        //     state.renderer
+        //         .send_command(RenderCommand::UpdateCamera {
+        //             position: state.camera.position(),
+        //             view_projection_matrix: state.projection.matrix() * state.camera.view_matrix(),
+        //         })
+        //         .unwrap();
+        // };
+
+        // frame_jobs.push(Box::new(on_update));
+
         let size = window.inner_size();
         let camera = Camera::new((0.0, 5.0, 10.0), 45.0_f32.to_radians(), -20.0_f32.to_radians());
         let projection = Projection::new(size.width, size.height, 60.0_f32.to_radians(), 0.1, 500.0);
         let camera_controller = CameraController::new(8.0, 0.004);
-        let loader = AssetLoader::new(render_sender.clone());
+        let loader = AssetLoader::new(renderer.sender());
         let ui = Ui::new(Arc::clone(&window), loader.clone());
         let mut entities = HashMap::new();
 
@@ -71,10 +72,12 @@ impl State {
 
         let transform = light.to_transform();
         let entity = Entity::new(transform, Some("light".to_string()));
-        render_sender.send(RenderCommand::SpawnLight {
+
+        renderer.send_command(RenderCommand::SpawnLight {
             entity_id: entity.id(),
             light,
         })?;
+        // render_sender.send()?;
         entities.insert(entity.id(), entity);
 
         let directional = Light::Directional {
@@ -93,7 +96,8 @@ impl State {
 
         let directional_transform = directional.to_transform();
         let directional_entity = Entity::new(directional_transform, Some("dir_light".to_string()));
-        render_sender.send(RenderCommand::SpawnLight {
+
+        renderer.send_command(RenderCommand::SpawnLight {
             entity_id: directional_entity.id(),
             light: directional,
         })?;
@@ -101,7 +105,7 @@ impl State {
 
         Ok(Self {
             window,
-            surface,
+            // surface,
             ui,
             camera,
             camera_controller,
@@ -110,25 +114,20 @@ impl State {
             entities,
             timestamp: Instant::now(),
             is_running: true,
-            render_tx: render_sender,
-            result_rx: error_receiver,
-            #[cfg(target_family = "wasm")]
+            // render_tx: render_sender,
+            // result_rx: error_receiver,
             renderer,
+            event_queue: Vec::new(),
+            // frame_jobs,
         })
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub fn update(&mut self, event_loop: &ActiveEventLoop) {
         self.window.request_redraw();
+        let should_update = self.renderer.poll_events(&mut self.event_queue, event_loop);
 
-        while let Ok(result) = self.result_rx.try_recv() {
-            match result {
-                RenderEvent::FrameComplete => {
-                    self.surface.present();
-                }
-                RenderEvent::ResizeComplete { config, device } => {
-                    self.surface.apply_resize(config, device);
-                }
+        for event in self.event_queue.drain(..) {
+            match event {
                 RenderEvent::LoadComplete {
                     render_id,
                     transform,
@@ -170,8 +169,8 @@ impl State {
                                 y: -5.0,
                                 z: 0.0,
                             };
-                            self.render_tx
-                                .send(RenderCommand::SpawnAsset {
+                            self.renderer
+                                .send_command(RenderCommand::SpawnAsset {
                                     entity_id: entity.id(),
                                     render_id,
                                     transform: glam::Mat4::from_translation(translation) * entity.transform(),
@@ -184,147 +183,8 @@ impl State {
                         // let (scale, rotation, position) = transform.to_scale_rotation_translation();
                         let entity = Entity::new(transform, label);
 
-                        self.render_tx
-                            .send(RenderCommand::SpawnAsset {
-                                entity_id: entity.id(),
-                                render_id,
-                                transform,
-                            })
-                            .unwrap();
-                        self.entities.insert(entity.id(), entity);
-                    }
-                }
-                RenderEvent::Stopped => {
-                    event_loop.exit();
-                }
-            }
-
-            if self.is_running && matches!(self.surface.state(), SurfaceState::Configured) {
-                if let Err(error) = self.request_frame() {
-                    log::error!("Unable to request frame from renderer: {}", error);
-                }
-            } else if !self.is_running {
-                self.render_tx.send(RenderCommand::Stop).unwrap();
-                self.surface.drop();
-            }
-        }
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    fn request_frame(&mut self) -> anyhow::Result<()> {
-        let delta_time = self.timestamp.elapsed();
-        self.timestamp = Instant::now();
-
-        self.camera_controller.update_camera(&mut self.camera, delta_time);
-        self.render_tx.send(RenderCommand::UpdateCamera {
-            position: self.camera.position(),
-            view_projection_matrix: self.projection.matrix() * self.camera.view_matrix(),
-        })?;
-
-        match self.surface.acquire() {
-            Ok(view) => {
-                let ui = self.ui.build(self.surface.config(), delta_time);
-                self.render_tx.send(RenderCommand::RenderFrame { view, ui })?;
-            }
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
-                let size = self.window().inner_size();
-                self.resize(size.width, size.height);
-            }
-            Err(error) => {
-                log::error!("Unable to render surface: {}", error);
-            }
-        }
-
-        if let Some(light) = self
-            .entities
-            .values_mut()
-            .find(|entity| entity.label().as_ref().unwrap() == "light")
-        {
-            let position = light.transform().w_axis.truncate();
-            let rotation = glam::Quat::from_rotation_y(5.0_f32.to_radians() * delta_time.as_secs_f32());
-            let new_position = rotation * position;
-            let transform = glam::Mat4::from_translation(new_position);
-            light.set_transform(transform);
-
-            self.render_tx.send(RenderCommand::UpdateTransform {
-                entity_id: light.id(),
-                transform,
-            })?;
-        }
-        Ok(())
-    }
-
-    #[cfg(target_family = "wasm")]
-    pub fn update(&mut self, event_loop: &ActiveEventLoop) {
-        let delta_time = self.timestamp.elapsed();
-        self.timestamp = Instant::now();
-
-        if !self.is_running {
-            event_loop.exit();
-        }
-
-        self.window.request_redraw();
-        self.camera_controller.update_camera(&mut self.camera, delta_time);
-
-        while let Ok(result) = self.result_rx.try_recv() {
-            match result {
-                RenderEvent::LoadComplete {
-                    render_id,
-                    transform,
-                    label,
-                } => {
-                    if label.clone().unwrap() == "cube.obj" {
-                        const NUM_INSTANCES_PER_ROW: u32 = 10;
-                        const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3 {
-                            x: NUM_INSTANCES_PER_ROW as f32 * 0.5,
-                            y: 0.0,
-                            z: NUM_INSTANCES_PER_ROW as f32 * 0.5,
-                        };
-
-                        const SPACE_BETWEEN: f32 = 3.0;
-                        let instances = (0..NUM_INSTANCES_PER_ROW)
-                            .flat_map(|z| {
-                                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-
-                                    let position = glam::Vec3::new(x as f32, 0.0, z as f32) - INSTANCE_DISPLACEMENT;
-                                    let rotation = if position.length_squared() == 0.0 {
-                                        glam::Quat::IDENTITY
-                                    } else {
-                                        glam::Quat::from_axis_angle(position.normalize(), 45.0_f32.to_radians())
-                                    };
-
-                                    DemoInstance::new(position, rotation)
-                                })
-                            })
-                            .collect::<Vec<_>>();
-
-                        for instance in instances {
-                            let transform = glam::Mat4::from_rotation_translation(instance.rotation, instance.position);
-                            let entity = Entity::new(transform, label.clone());
-
-                            let translation = glam::Vec3 {
-                                x: 0.0,
-                                y: -5.0,
-                                z: 0.0,
-                            };
-                            self.render_tx
-                                .send(RenderCommand::SpawnAsset {
-                                    entity_id: entity.id(),
-                                    render_id,
-                                    transform: glam::Mat4::from_translation(translation) * entity.transform(),
-                                })
-                                .unwrap();
-                            self.entities.insert(entity.id(), entity);
-                        }
-                    } else {
-                        let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
-                        // let (scale, rotation, position) = transform.to_scale_rotation_translation();
-                        let entity = Entity::new(transform, label);
-
-                        self.render_tx
-                            .send(RenderCommand::SpawnAsset {
+                        self.renderer
+                            .send_command(RenderCommand::SpawnAsset {
                                 entity_id: entity.id(),
                                 render_id,
                                 transform,
@@ -337,86 +197,64 @@ impl State {
             }
         }
 
+        if should_update && self.renderer.is_ready() {
+            let timestep = self.timestamp.elapsed();
+            self.timestamp = Instant::now();
+
+            self.update_camera(timestep);
+            self.update_ui(timestep);
+
+            // Debug
+            let light = self
+                .entities
+                .values_mut()
+                .find(|entity| entity.label().as_ref().unwrap() == "light")
+                .unwrap();
+
+            let position = light.transform().w_axis.truncate();
+            let rotation = glam::Quat::from_rotation_y(5.0_f32.to_radians() * timestep.as_secs_f32());
+            let new_position = rotation * position;
+            let transform = glam::Mat4::from_translation(new_position);
+            light.set_transform(transform);
+
+            self.renderer
+                .send_command(RenderCommand::UpdateTransform {
+                    entity_id: light.id(),
+                    transform,
+                })
+                .unwrap();
+            // end debug
+
+            self.renderer.request_frame(&self.window);
+        }
+    }
+
+    fn update_camera(&mut self, timestep: Duration) {
+        self.camera_controller.update_camera(&mut self.camera, timestep);
         self.renderer.update_camera(
             self.camera.position(),
             self.projection.matrix() * self.camera.view_matrix(),
         );
-
-        // Debug
-        let light = self
-            .entities
-            .values_mut()
-            .find(|entity| entity.label().as_ref().unwrap() == "light")
-            .unwrap();
-
-        let position = light.transform().w_axis.truncate();
-        let rotation = glam::Quat::from_rotation_y(5.0_f32.to_radians() * delta_time.as_secs_f32());
-        let new_position = rotation * position;
-        let transform = glam::Mat4::from_translation(new_position);
-        light.set_transform(transform);
-
-        self.render_tx
-            .send(RenderCommand::UpdateTransform {
-                entity_id: light.id(),
-                transform,
-            })
-            .unwrap();
-        // end debug
-
-        if let Err(error) = self.renderer.run() {
-            log::error!("Error handling renderer events: {}", error);
-        }
-
-        let view = match self.surface.acquire() {
-            Ok(view) => view,
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
-                let size = self.window().inner_size();
-                self.resize(size.width, size.height);
-                return;
-            }
-            Err(error) => {
-                log::error!("Unable to render surface: {}", error);
-                return;
-            }
-        };
-
-        let ui = self.ui.build(self.surface.config(), delta_time);
-        self.renderer.render_frame(view, ui);
-        self.surface.present();
     }
 
-    #[cfg(not(target_family = "wasm"))]
+    fn update_ui(&mut self, timestep: Duration) {
+        self.renderer.update_ui(&mut self.ui, timestep);
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width <= 0 || height <= 0 {
             return;
         }
 
         self.projection.resize(width, height);
-
-        let config = self.surface.request_resize(width, height);
-        self.render_tx.send(RenderCommand::Resize(config)).unwrap();
-    }
-
-    #[cfg(target_family = "wasm")]
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width <= 0 || height <= 0 {
-            return;
-        }
-
-        self.projection.resize(width, height);
-
-        let config = self.surface.request_resize(width, height);
-        let device = self.renderer.device();
-        self.surface.apply_resize(config.clone(), device.clone());
-
-        self.renderer.update_config(config);
+        self.renderer.resize(width, height);
     }
 
     pub fn exit(&mut self) {
-        self.is_running = false;
+        self.renderer.exit();
     }
 
-    pub fn window(&self) -> &Arc<Window> {
+    pub fn window(&self) -> &Window {
         &self.window
     }
 

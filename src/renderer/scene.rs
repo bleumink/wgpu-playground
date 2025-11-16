@@ -2,17 +2,16 @@ use std::{collections::HashMap, hash::Hash, ops::Range};
 
 use uuid::Uuid;
 
-use crate::{
+use crate::renderer::{
     component::{ComponentId, ComponentStore, HostComponentStore, RelationStore},
     context::RenderContext,
-    entity::EntityId,
     instance::{Instance, InstancePool},
     light::{Light, LightId, LightUniform},
     material::Material,
     mesh::{DrawMesh, Mesh, Primitive, Scene},
+    pipeline::PipelineCache,
     pointcloud::{DrawPointcloud, Pointcloud},
-    renderer::PipelineCache,
-    transform::{TransformBuffer, TransformUniform},
+    transform::TransformUniform,
 };
 
 pub type MaterialId = Uuid;
@@ -241,7 +240,7 @@ impl SceneGraph {
         id
     }
 
-    pub fn add_node(&mut self, entity: EntityId, handle: RenderId, transform: glam::Mat4, context: &RenderContext) {
+    pub fn add_node(&mut self, entity: Uuid, handle: RenderId, transform: glam::Mat4, context: &RenderContext) {
         let transform_uniform = TransformUniform::new(transform);
         let transform_index = self.transforms.add(entity, transform_uniform, context);
 
@@ -255,7 +254,7 @@ impl SceneGraph {
         self.build_render_batches(context);
     }
 
-    pub fn add_light(&mut self, entity: EntityId, light: Light, context: &RenderContext) {
+    pub fn add_light(&mut self, entity: Uuid, light: Light, context: &RenderContext) {
         let (uniform, transform) = light.to_parts();
         let transform_index = self.transforms.add(entity, transform, context);
         let light_index = self.lights.add(entity, uniform, context);

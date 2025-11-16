@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use gltf::{
-    animation::util::morph_target_weights::F32, image::Format as GltfImageFormat, texture::{MagFilter, MinFilter, WrappingMode}
+    image::Format as GltfImageFormat,
+    texture::{MagFilter, MinFilter, WrappingMode},
 };
 use image::GenericImageView;
 
@@ -210,7 +211,11 @@ impl Texture {
 
     pub fn from_view(device: &wgpu::Device, queue: &wgpu::Queue, view: &TextureView, label: Option<&str>) -> Self {
         let image = view.to_image().unwrap();
-        let format = if view.is_srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
+        let format = if view.is_srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        };
         let data = image.to_rgba8();
         let dimensions = image.dimensions();
         let size = wgpu::Extent3d {
@@ -229,7 +234,7 @@ impl Texture {
         format: wgpu::TextureFormat,
         sampler_desc: &wgpu::SamplerDescriptor,
         label: Option<&str>,
-    ) -> Self {        
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
@@ -328,9 +333,9 @@ impl Texture {
     }
 
     pub fn create_depth_texture(
-        label: Option<&str>,
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
+        label: Option<&str>,
     ) -> Self {
         let size = wgpu::Extent3d {
             width: config.width.max(1),
@@ -363,6 +368,37 @@ impl Texture {
             lod_max_clamp: 100.0,
             ..Default::default()
         });
+
+        Self { texture, view, sampler }
+    }
+
+    pub fn create_2d_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        format: wgpu::TextureFormat,
+        sampler_descriptor: &wgpu::SamplerDescriptor,
+        label: Option<&str>,
+    ) -> Self {
+        let size = wgpu::Extent3d {
+            width: config.width.max(1),
+            height: config.height.max(1),
+            depth_or_array_layers: 1,
+        };
+
+        let desc = wgpu::TextureDescriptor {
+            label,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+
+        let texture = device.create_texture(&desc);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&sampler_descriptor);
 
         Self { texture, view, sampler }
     }

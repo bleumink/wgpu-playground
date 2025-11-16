@@ -1,10 +1,6 @@
-use std::{collections::HashMap, f32::DIGITS};
-
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
-use wgpu::util::DeviceExt;
 
-use crate::{context::RenderContext, entity::EntityId, transform::TransformUniform};
+use crate::renderer::{context::RenderContext, transform::TransformUniform};
 
 pub struct LightId(pub usize);
 
@@ -73,7 +69,7 @@ impl Light {
             let right = dir.cross(up).normalize();
             let up = right.cross(dir).normalize();
 
-            Mat4::from_cols(
+            glam::Mat4::from_cols(
                 right.extend(0.0),
                 up.extend(0.0),
                 (-dir).extend(0.0),

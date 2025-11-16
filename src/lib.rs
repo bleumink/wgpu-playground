@@ -6,30 +6,13 @@ use wasm_bindgen::prelude::*;
 use crate::app::App;
 
 mod app;
-mod asset;
-mod binary;
 mod camera;
-mod component;
-mod context;
 mod dialog;
 mod entity;
 mod error;
-mod hdr;
-mod instance;
-mod light;
-mod material;
-mod mesh;
-mod pointcloud;
 mod renderer;
-mod scene;
 mod state;
-mod surface;
-mod texture;
-mod transform;
 mod ui;
-mod vertex;
-#[cfg(target_family = "wasm")]
-mod worker;
 
 pub fn run() -> anyhow::Result<()> {
     #[cfg(not(target_family = "wasm"))]

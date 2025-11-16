@@ -10,9 +10,9 @@ use instant::Instant;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_family = "wasm")]
-use crate::worker::{LoadTask, UploadTask, WorkerPool};
+use crate::renderer::worker::{LoadTask, UploadTask, WorkerPool};
 
-use crate::{mesh::SceneBuffer, pointcloud::PointcloudBuffer, renderer::RenderCommand};
+use crate::renderer::{RenderCommand, mesh::SceneBuffer, pointcloud::PointcloudBuffer};
 
 #[derive(Clone)]
 pub enum ResourcePath {
@@ -29,19 +29,6 @@ pub enum SerializableResourcePath {
     Url(reqwest::Url),
 }
 
-// #[async_trait(?Send)]
-// pub trait Resource {
-//     fn as_serializable(&self) -> Option<SerializableResourcePath>;
-//     fn as_str(&self) -> Cow<'_, str>;
-//     fn file_name(&self) -> Cow<'_, str>;
-//     fn extension(&self) -> Option<Cow<'_, str>>;
-//     fn create_relative(&self, name: &str) -> Self;
-//     async fn load_string(&self) -> anyhow::Result<String>;
-//     async fn load_binary(&self) -> anyhow::Result<Vec<u8>>;
-// }
-
-// #[cfg(target_family = "wasm")]
-// #[async_trait(?Send)]
 impl ResourcePath {
     pub fn new(path: &str) -> anyhow::Result<Self> {
         #[cfg(not(target_family = "wasm"))]

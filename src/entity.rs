@@ -1,7 +1,5 @@
 use uuid::Uuid;
 
-use crate::renderer::RenderId;
-
 pub type EntityId = Uuid;
 
 #[derive(Debug)]
