@@ -22,6 +22,10 @@ impl Entity {
         }
     }
 
+    pub fn translate(&mut self, translation: glam::Vec3) {        
+        self.transform = glam::Mat4::from_translation(translation) * self.transform;
+    }
+
     pub fn id(&self) -> EntityId {
         self.id
     }

@@ -6,7 +6,7 @@ use winit::{event_loop::ActiveEventLoop, window::Window};
 use crate::{
     camera::{Camera, CameraController, Projection},
     entity::{Entity, EntityId},
-    renderer::{AssetLoader, DemoInstance, Light, RenderCommand, RenderEvent, Renderer, ResourcePath},
+    renderer::{AssetLoader, Light, RenderCommand, RenderEvent, RenderId, Renderer, ResourcePath},
     ui::Ui,
 };
 
@@ -134,53 +134,18 @@ impl State {
                     label,
                 } => {
                     if label.clone().unwrap() == "cube.obj" {
-                        const NUM_INSTANCES_PER_ROW: u32 = 10;
-                        const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3 {
-                            x: NUM_INSTANCES_PER_ROW as f32 * 0.5,
-                            y: 0.0,
-                            z: NUM_INSTANCES_PER_ROW as f32 * 0.5,
-                        };
-
-                        const SPACE_BETWEEN: f32 = 3.0;
-                        let instances = (0..NUM_INSTANCES_PER_ROW)
-                            .flat_map(|z| {
-                                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-
-                                    let position = glam::Vec3::new(x as f32, 0.0, z as f32) - INSTANCE_DISPLACEMENT;
-                                    let rotation = if position.length_squared() == 0.0 {
-                                        glam::Quat::IDENTITY
-                                    } else {
-                                        glam::Quat::from_axis_angle(position.normalize(), 45.0_f32.to_radians())
-                                    };
-
-                                    DemoInstance::new(position, rotation)
-                                })
-                            })
-                            .collect::<Vec<_>>();
-
-                        for instance in instances {
-                            let transform = glam::Mat4::from_rotation_translation(instance.rotation, instance.position);
-                            let entity = Entity::new(transform, label.clone());
-
-                            let translation = glam::Vec3 {
-                                x: 0.0,
-                                y: -5.0,
-                                z: 0.0,
-                            };
+                        for entity in create_instances(label) {
                             self.renderer
                                 .send_command(RenderCommand::SpawnAsset {
                                     entity_id: entity.id(),
                                     render_id,
-                                    transform: glam::Mat4::from_translation(translation) * entity.transform(),
+                                    transform: entity.transform(),
                                 })
                                 .unwrap();
-                            self.entities.insert(entity.id(), entity);
+                            self.entities.insert(entity.id(), entity);                            
                         }
                     } else {
                         let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
-                        // let (scale, rotation, position) = transform.to_scale_rotation_translation();
                         let entity = Entity::new(transform, label);
 
                         self.renderer
@@ -212,7 +177,7 @@ impl State {
                 .unwrap();
 
             let position = light.transform().w_axis.truncate();
-            let rotation = glam::Quat::from_rotation_y(5.0_f32.to_radians() * timestep.as_secs_f32());
+            let rotation = glam::Quat::from_rotation_y(10.0_f32.to_radians() * timestep.as_secs_f32());
             let new_position = rotation * position;
             let transform = glam::Mat4::from_translation(new_position);
             light.set_transform(transform);
@@ -269,4 +234,63 @@ impl State {
     pub fn camera_controller_mut(&mut self) -> &mut CameraController {
         &mut self.camera_controller
     }
+}
+
+fn create_instances(label: Option<String>) -> Vec<Entity> {
+    #[derive(Clone)]
+    pub struct DemoInstance {
+        pub position: glam::Vec3,
+        pub rotation: glam::Quat,
+    }
+
+    impl DemoInstance {
+        pub fn new(position: glam::Vec3, rotation: glam::Quat) -> Self {
+            Self { position, rotation }
+        }
+
+        pub fn to_mat4(&self) -> glam::Mat4 {
+            glam::Mat4::from_rotation_translation(self.rotation, self.position)
+        }
+    }    
+    const NUM_INSTANCES_PER_ROW: u32 = 10;
+    const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3 {
+        x: NUM_INSTANCES_PER_ROW as f32 * 0.5,
+        y: 0.0,
+        z: NUM_INSTANCES_PER_ROW as f32 * 0.5,
+    };
+
+    const SPACE_BETWEEN: f32 = 3.0;
+    let instances = (0..NUM_INSTANCES_PER_ROW)
+        .flat_map(|z| {
+            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+
+                let position = glam::Vec3::new(x as f32, 0.0, z as f32) - INSTANCE_DISPLACEMENT;
+                let rotation = if position.length_squared() == 0.0 {
+                    glam::Quat::IDENTITY
+                } else {
+                    glam::Quat::from_axis_angle(position.normalize(), 45.0_f32.to_radians())
+                };
+
+                DemoInstance::new(position, rotation)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    instances.iter().map(|instance| {
+        let mut entity = Entity::new(
+            glam::Mat4::from_rotation_translation(instance.rotation, instance.position), 
+            label.clone()
+        );
+
+        let translation = glam::Vec3 {
+            x: 0.0,
+            y: -5.0,
+            z: 0.0,
+        };    
+
+        entity.translate(translation);
+        entity        
+    }).collect()
 }

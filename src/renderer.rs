@@ -8,14 +8,12 @@ use crate::{
     renderer::{
         asset::AssetBuffer,
         backend::RenderBackend,
-        context::RenderContext,
         core::RenderCore,
-        surface::{Surface, SurfaceState},
+        surface::Surface,
     },
-    state::State,
     ui::{Ui, UiData},
 };
-pub use instance::DemoInstance;
+
 pub use {
     asset::{AssetLoader, ResourcePath},
     light::Light,
@@ -141,8 +139,8 @@ impl Renderer {
         self.backend.update_camera(position, view_projection_matrix);
     }
 
-    pub fn exit(&mut self) {
-        self.backend.exit();
+    pub fn exit(&mut self) {        
+        self.backend.exit();        
     }
 
     pub fn is_ready(&self) -> bool {

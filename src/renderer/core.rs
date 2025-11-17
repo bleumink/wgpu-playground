@@ -394,14 +394,14 @@ impl RenderCore {
 
     pub fn handle_command(&mut self, command: RenderCommand) -> anyhow::Result<()> {
         match command {
-            RenderCommand::RenderFrame { view } => {
+            RenderCommand::RenderFrame { view } => {                
                 self.render_frame(view);
                 self.result_tx.send(RenderEvent::FrameComplete)?;
 
                 if let Some(config) = self.context.pending_resize.take() {
                     self.context.resize(config);
                 }
-            }
+            },
             RenderCommand::UpdateCamera {
                 position,
                 view_projection_matrix,
@@ -420,14 +420,14 @@ impl RenderCore {
                     config,
                     device: self.context.device.clone(),
                 })?;
-            }
+            },
             RenderCommand::UpdateTransform { entity_id, transform } => {
                 let uniform = TransformUniform::new(transform);
                 self.scene.transforms.set(&entity_id, uniform, &self.context);
-            }
+            },
             RenderCommand::Stop => {
                 self.is_running = false;
-            }
+            },
         }
 
         Ok(())

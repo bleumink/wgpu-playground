@@ -6,22 +6,6 @@ use wgpu::util::DeviceExt;
 
 use crate::renderer::{context::RenderContext, scene::SceneGraph, vertex::Vertex};
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct DemoInstance {
-    pub position: glam::Vec3,
-    pub rotation: glam::Quat,
-}
-
-impl DemoInstance {
-    pub fn new(position: glam::Vec3, rotation: glam::Quat) -> Self {
-        Self { position, rotation }
-    }
-
-    pub fn to_mat4(&self) -> glam::Mat4 {
-        glam::Mat4::from_rotation_translation(self.rotation, self.position)
-    }
-}
-
 // pub trait Instanced {
 //     type Instance: Pod + Vertex;
 
