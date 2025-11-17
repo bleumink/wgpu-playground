@@ -1,10 +1,17 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 
 use instant::Instant;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
 use crate::{
-    camera::{Camera, CameraController, Projection}, dialog::open_file_dialog, entity::{Entity, EntityId}, renderer::{AssetLoader, Light, RenderCommand, RenderEvent, RenderId, Renderer, ResourcePath, Ui}
+    camera::{Camera, CameraController, Projection},
+    dialog::open_file_dialog,
+    entity::{Entity, EntityId},
+    renderer::{AssetLoader, Light, RenderCommand, RenderEvent, RenderId, Renderer, ResourcePath, Ui},
 };
 
 pub struct State {
@@ -18,12 +25,11 @@ pub struct State {
     entities: HashMap<EntityId, Entity>,
     renderer: Renderer,
     event_queue: Vec<RenderEvent>,
+    average_fps: VecDeque<f32>,
 }
 
 impl State {
-    pub async fn new(
-        window: Arc<Window>,
-    ) -> anyhow::Result<Self> {
+    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         let renderer = Renderer::new(Arc::clone(&window)).await;
         let size = window.inner_size();
         let camera = Camera::new((0.0, 5.0, 10.0), 45.0_f32.to_radians(), -20.0_f32.to_radians());
@@ -87,9 +93,10 @@ impl State {
             projection,
             loader,
             entities,
-            timestamp: Instant::now(),        
+            timestamp: Instant::now(),
             renderer,
             event_queue: Vec::new(),
+            average_fps: VecDeque::new(),
         })
     }
 
@@ -113,7 +120,7 @@ impl State {
                                     transform: entity.transform(),
                                 })
                                 .unwrap();
-                            self.entities.insert(entity.id(), entity);                            
+                            self.entities.insert(entity.id(), entity);
                         }
                     } else {
                         let transform = transform.unwrap_or(glam::Mat4::IDENTITY);
@@ -136,29 +143,30 @@ impl State {
         if should_update && self.renderer.is_ready() {
             let timestep = self.timestamp.elapsed();
             self.timestamp = Instant::now();
+            let average_fps = self.average_fps(timestep);
 
             // UI
             let ctx = self.ui.begin_frame();
 
-            egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("File").clicked() {
-                        log::info!("file?");
-                    }
-                    ui.label("WGPU Speeltuin");
-                });
-            });
+            // egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            //     ui.horizontal(|ui| {
+            //         if ui.button("File").clicked() {
+            //             log::info!("file?");
+            //         }
+            //         ui.label("WGPU Speeltuin");
+            //     });
+            // });
 
-            egui::SidePanel::left("side_panel")
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.heading("Sidebar");
-                    ui.separator();
-                    if ui.button("Load Asset").clicked() {
-                        open_file_dialog(self.loader.clone());
-                    }
-                    ui.label("Status: Ready");
-                });
+            // egui::SidePanel::left("side_panel")
+            //     .resizable(true)
+            //     .show(ctx, |ui| {
+            //         ui.heading("Sidebar");
+            //         ui.separator();
+            // if ui.button("Load Asset").clicked() {
+            //     open_file_dialog(self.loader.clone());
+            // }
+            //         ui.label("Status: Ready");
+            //     });
 
             // egui::CentralPanel::default()
             //     .show(ctx, |ui| {
@@ -166,12 +174,16 @@ impl State {
             //         ui.label("Put your scene or widgets here!");
             //     });
 
-            egui::Window::new("Hello")
+            egui::Window::new("Debug")
                 .resizable(true)
                 .movable(true)
                 .show(ctx, |ui| {
-                    ui.label(format!("FPS: {}", (1.0 / timestep.as_secs_f32()).round()))
-            });
+                    ui.label(format!("FPS: {}", average_fps));
+                    ui.add_space(10.0);
+                    if ui.button("Load Asset").clicked() {
+                        open_file_dialog(self.loader.clone());
+                    }
+                });
             // End UI
 
             let ui_data = self.ui.end_frame();
@@ -208,6 +220,15 @@ impl State {
         }
     }
 
+    pub fn average_fps(&mut self, timestep: Duration) -> f32 {
+        self.average_fps.push_back(timestep.as_secs_f32());
+        if self.average_fps.len() > 10 {
+            self.average_fps.pop_front();
+        }
+
+        (1.0 / (self.average_fps.iter().sum::<f32>() / 10.0)).round()
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width <= 0 || height <= 0 {
             return;
@@ -215,6 +236,7 @@ impl State {
 
         self.projection.resize(width, height);
         self.renderer.resize(width, height);
+        self.ui.drop_frame();
     }
 
     pub fn exit(&mut self) {
@@ -253,7 +275,7 @@ fn create_instances(label: Option<String>) -> Vec<Entity> {
         pub fn to_mat4(&self) -> glam::Mat4 {
             glam::Mat4::from_rotation_translation(self.rotation, self.position)
         }
-    }    
+    }
     const NUM_INSTANCES_PER_ROW: u32 = 10;
     const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3 {
         x: NUM_INSTANCES_PER_ROW as f32 * 0.5,
@@ -280,19 +302,22 @@ fn create_instances(label: Option<String>) -> Vec<Entity> {
         })
         .collect::<Vec<_>>();
 
-    instances.iter().map(|instance| {
-        let mut entity = Entity::new(
-            glam::Mat4::from_rotation_translation(instance.rotation, instance.position), 
-            label.clone()
-        );
+    instances
+        .iter()
+        .map(|instance| {
+            let mut entity = Entity::new(
+                glam::Mat4::from_rotation_translation(instance.rotation, instance.position),
+                label.clone(),
+            );
 
-        let translation = glam::Vec3 {
-            x: 0.0,
-            y: -5.0,
-            z: 0.0,
-        };    
+            let translation = glam::Vec3 {
+                x: 0.0,
+                y: -5.0,
+                z: 0.0,
+            };
 
-        entity.translate(translation);
-        entity        
-    }).collect()
+            entity.translate(translation);
+            entity
+        })
+        .collect()
 }

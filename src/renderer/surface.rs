@@ -136,7 +136,7 @@ impl Surface {
 
     pub fn apply_resize(&mut self, config: wgpu::SurfaceConfiguration, device: wgpu::Device) {
         match &mut self.state {
-            SurfaceState::Acquired(_) | SurfaceState::Configured => {                
+            SurfaceState::Acquired(_) | SurfaceState::Configured => {
                 self.pending_resize = Some((config, device));
             }
             SurfaceState::Resizing => {

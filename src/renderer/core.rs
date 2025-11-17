@@ -2,23 +2,21 @@ use crossbeam::channel::{Receiver, Sender};
 use egui_wgpu::Renderer as EguiRenderer;
 use uuid::Uuid;
 
-use crate::{
-    renderer::{
-        RenderCommand, RenderEvent,
-        asset::AssetBuffer,
-        camera::Camera,
-        context::RenderContext,
-        instance::Instance,
-        light::Light,
-        mesh::{MeshVertex, Scene, TextureCoordinate},
-        pipeline::PipelineCache,
-        pointcloud::{PointVertex, Pointcloud},
-        scene::{DrawScene, RenderId, SceneGraph},
-        texture::Texture,
-        transform::TransformUniform,
-        vertex::VertexLayoutBuilder,
-        ui::UiData,
-    },
+use crate::renderer::{
+    RenderCommand, RenderEvent,
+    asset::AssetBuffer,
+    camera::Camera,
+    context::RenderContext,
+    instance::Instance,
+    light::Light,
+    mesh::{MeshVertex, Scene, TextureCoordinate},
+    pipeline::PipelineCache,
+    pointcloud::{PointVertex, Pointcloud},
+    scene::{DrawScene, RenderId, SceneGraph},
+    texture::Texture,
+    transform::TransformUniform,
+    ui::UiData,
+    vertex::VertexLayoutBuilder,
 };
 
 const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
@@ -381,7 +379,7 @@ impl RenderCore {
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
-                }
+                },
             })],
             depth_stencil_attachment: None,
             occlusion_query_set: None,
@@ -400,7 +398,7 @@ impl RenderCore {
         self.render_scene(&mut frame);
         self.render_hdr(&mut frame);
         self.render_ui(&mut frame);
-        
+
         self.context.queue.submit(Some(frame.finish()));
     }
 
@@ -412,20 +410,20 @@ impl RenderCore {
         self.context.resize(config);
     }
 
-    pub fn update_ui(&mut self, data: UiData) {
-        self.ui_data = Some(data);
+    pub fn update_ui(&mut self, data: Option<UiData>) {
+        self.ui_data = data;
     }
 
     pub fn handle_command(&mut self, command: RenderCommand) -> anyhow::Result<()> {
         match command {
-            RenderCommand::RenderFrame { view } => {                
+            RenderCommand::RenderFrame { view } => {
                 self.render_frame(view);
                 self.result_tx.send(RenderEvent::FrameComplete)?;
 
                 if let Some(config) = self.context.pending_resize.take() {
                     self.context.resize(config);
                 }
-            },
+            }
             RenderCommand::UpdateCamera {
                 position,
                 view_projection_matrix,
@@ -444,14 +442,14 @@ impl RenderCore {
                     config,
                     device: self.context.device.clone(),
                 })?;
-            },
+            }
             RenderCommand::UpdateTransform { entity_id, transform } => {
                 let uniform = TransformUniform::new(transform);
                 self.scene.transforms.set(&entity_id, uniform, &self.context);
-            },
+            }
             RenderCommand::Stop => {
                 self.is_running = false;
-            },
+            }
         }
 
         Ok(())

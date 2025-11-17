@@ -5,13 +5,7 @@ use uuid::Uuid;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
 use crate::{
-    renderer::{
-        asset::AssetBuffer,
-        backend::RenderBackend,
-        core::RenderCore,
-        surface::Surface,
-        ui::UiData,
-    },
+    renderer::{asset::AssetBuffer, backend::RenderBackend, core::RenderCore, surface::Surface, ui::UiData},
     // ui::{Ui, UiData},
 };
 
@@ -54,7 +48,7 @@ pub enum RenderCommand {
         view_projection_matrix: glam::Mat4,
     },
     UpdateUi {
-        data: UiData,
+        data: Option<UiData>,
     },
     Resize(wgpu::SurfaceConfiguration),
     LoadAsset(AssetBuffer),
@@ -120,10 +114,7 @@ impl Renderer {
             }
         });
 
-        Self {
-            render_tx,
-            backend,
-        }
+        Self { render_tx, backend }
     }
 
     pub fn request_frame(&mut self, window: &Window) {
@@ -134,7 +125,7 @@ impl Renderer {
         self.backend.resize(width, height);
     }
 
-    pub fn update_ui(&mut self, data: UiData) {        
+    pub fn update_ui(&mut self, data: Option<UiData>) {
         self.backend.update_ui(data);
     }
 
@@ -142,8 +133,8 @@ impl Renderer {
         self.backend.update_camera(position, view_projection_matrix);
     }
 
-    pub fn exit(&mut self) {        
-        self.backend.exit();        
+    pub fn exit(&mut self) {
+        self.backend.exit();
     }
 
     pub fn is_ready(&self) -> bool {

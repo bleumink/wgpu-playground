@@ -15,36 +15,35 @@ impl HdrPipeline {
         let format = wgpu::TextureFormat::Rgba16Float;
         let sampler = wgpu::SamplerDescriptor::default();
         let texture = Texture::create_2d_texture(
-            config.width, 
-            config.height, 
-            device, 
-            format, 
-            &sampler, 
-            Some("HDR texture")
+            config.width,
+            config.height,
+            device,
+            format,
+            &sampler,
+            Some("HDR texture"),
         );
 
-        let layout = device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("HDR layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("HDR layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let bind_group = Self::create_bind_group(device, &texture, &layout);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -111,9 +110,9 @@ impl HdrPipeline {
         self.texture = Texture::create_2d_texture(
             config.width,
             config.height,
-            device, 
-            self.format, 
-            &wgpu::SamplerDescriptor::default(), 
+            device,
+            self.format,
+            &wgpu::SamplerDescriptor::default(),
             Some("HDR texture"),
         );
 
@@ -154,6 +153,6 @@ impl HdrPipeline {
                     resource: wgpu::BindingResource::Sampler(&texture.sampler),
                 },
             ],
-        })       
+        })
     }
 }

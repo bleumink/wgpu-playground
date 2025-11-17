@@ -15,6 +15,7 @@ pub struct Ui {
     window: Arc<Window>,
     context: Context,
     state: State,
+    pending_resize: bool,
 }
 
 impl Ui {
@@ -26,6 +27,7 @@ impl Ui {
             window,
             context,
             state,
+            pending_resize: false,
         }
     }
 
@@ -39,23 +41,32 @@ impl Ui {
         &self.context
     }
 
-    pub fn end_frame(&self) -> UiData {
+    pub fn end_frame(&mut self) -> Option<UiData> {
+        if self.pending_resize {
+            self.pending_resize = false;
+            return None;
+        }
+
         let full_output = self.context.end_pass();
-        
+
         let paint_jobs = self
             .context
             .tessellate(full_output.shapes, full_output.pixels_per_point);
-        
+
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: self.window.inner_size().into(),
             pixels_per_point: self.context.pixels_per_point(),
         };
 
-        UiData {
+        Some(UiData {
             textures_delta: full_output.textures_delta,
             paint_jobs,
             screen_descriptor,
-        }
+        })
+    }
+
+    pub fn drop_frame(&mut self) {
+        self.pending_resize = true;
     }
 
     pub fn context(&self) -> &Context {
