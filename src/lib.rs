@@ -12,7 +12,6 @@ mod entity;
 mod error;
 mod renderer;
 mod state;
-mod ui;
 
 pub fn run() -> anyhow::Result<()> {
     #[cfg(not(target_family = "wasm"))]

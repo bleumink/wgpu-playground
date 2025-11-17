@@ -142,7 +142,7 @@ impl ApplicationHandler<State> for App {
             None => return,
         };
 
-        if state.ui_mut().is_input_consumed(&event) {
+        if state.ui_mut().on_event(&event) {
             return;
         }
 

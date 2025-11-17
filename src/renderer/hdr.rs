@@ -1,4 +1,4 @@
-use crate::renderer::{context::RenderContext, texture::Texture};
+use crate::renderer::texture::Texture;
 
 pub struct HdrPipeline {
     pipeline: wgpu::RenderPipeline,

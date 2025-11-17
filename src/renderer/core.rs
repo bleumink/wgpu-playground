@@ -17,8 +17,8 @@ use crate::{
         texture::Texture,
         transform::TransformUniform,
         vertex::VertexLayoutBuilder,
+        ui::UiData,
     },
-    ui::UiData,
 };
 
 const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[

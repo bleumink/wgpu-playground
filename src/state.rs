@@ -4,10 +4,7 @@ use instant::Instant;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
 use crate::{
-    camera::{Camera, CameraController, Projection},
-    entity::{Entity, EntityId},
-    renderer::{AssetLoader, Light, RenderCommand, RenderEvent, RenderId, Renderer, ResourcePath},
-    ui::Ui,
+    camera::{Camera, CameraController, Projection}, dialog::open_file_dialog, entity::{Entity, EntityId}, renderer::{AssetLoader, Light, RenderCommand, RenderEvent, RenderId, Renderer, ResourcePath, Ui}
 };
 
 pub struct State {
@@ -33,7 +30,7 @@ impl State {
         let projection = Projection::new(size.width, size.height, 60.0_f32.to_radians(), 0.1, 500.0);
         let camera_controller = CameraController::new(8.0, 0.004);
         let loader = AssetLoader::new(renderer.sender());
-        let ui = Ui::new(Arc::clone(&window), loader.clone());
+        let ui = Ui::new(Arc::clone(&window));
         let mut entities = HashMap::new();
 
         loader.load(ResourcePath::new("cube.obj").unwrap());
@@ -140,8 +137,51 @@ impl State {
             let timestep = self.timestamp.elapsed();
             self.timestamp = Instant::now();
 
-            self.update_camera(timestep);
-            self.update_ui(timestep);
+            // UI
+            let ctx = self.ui.begin_frame();
+
+            egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("File").clicked() {
+                        log::info!("file?");
+                    }
+                    ui.label("WGPU Speeltuin");
+                });
+            });
+
+            egui::SidePanel::left("side_panel")
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.heading("Sidebar");
+                    ui.separator();
+                    if ui.button("Load Asset").clicked() {
+                        open_file_dialog(self.loader.clone());
+                    }
+                    ui.label("Status: Ready");
+                });
+
+            // egui::CentralPanel::default()
+            //     .show(ctx, |ui| {
+            //         ui.heading("Main content");
+            //         ui.label("Put your scene or widgets here!");
+            //     });
+
+            egui::Window::new("Hello")
+                .resizable(true)
+                .movable(true)
+                .show(ctx, |ui| {
+                    ui.label(format!("FPS: {}", (1.0 / timestep.as_secs_f32()).round()))
+            });
+            // End UI
+
+            let ui_data = self.ui.end_frame();
+            self.renderer.update_ui(ui_data);
+
+            self.camera_controller.update_camera(&mut self.camera, timestep);
+            self.renderer.update_camera(
+                self.camera.position(),
+                self.projection.matrix() * self.camera.view_matrix(),
+            );
 
             // Debug
             let light = self
@@ -166,18 +206,6 @@ impl State {
 
             self.renderer.request_frame(&self.window);
         }
-    }
-
-    fn update_camera(&mut self, timestep: Duration) {
-        self.camera_controller.update_camera(&mut self.camera, timestep);
-        self.renderer.update_camera(
-            self.camera.position(),
-            self.projection.matrix() * self.camera.view_matrix(),
-        );
-    }
-
-    fn update_ui(&mut self, timestep: Duration) {
-        self.renderer.update_ui(&mut self.ui, timestep);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

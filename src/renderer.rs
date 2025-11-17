@@ -10,14 +10,16 @@ use crate::{
         backend::RenderBackend,
         core::RenderCore,
         surface::Surface,
+        ui::UiData,
     },
-    ui::{Ui, UiData},
+    // ui::{Ui, UiData},
 };
 
 pub use {
     asset::{AssetLoader, ResourcePath},
     light::Light,
     scene::RenderId,
+    ui::Ui,
 };
 
 mod asset;
@@ -38,6 +40,7 @@ mod scene;
 mod surface;
 mod texture;
 mod transform;
+mod ui;
 mod vertex;
 #[cfg(target_family = "wasm")]
 mod worker;
@@ -131,8 +134,8 @@ impl Renderer {
         self.backend.resize(width, height);
     }
 
-    pub fn update_ui(&mut self, ui: &mut Ui, timestep: Duration) {        
-        self.backend.update_ui(ui, timestep);
+    pub fn update_ui(&mut self, data: UiData) {        
+        self.backend.update_ui(data);
     }
 
     pub fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {

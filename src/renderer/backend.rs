@@ -1,23 +1,16 @@
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
-use instant::Instant;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
-use crate::{
-    renderer::{
-        RenderCommand, RenderEvent,
-        core::RenderCore,
-        surface::{Surface, SurfaceState},
-    },
-    state::State,
-    ui::{Ui, UiData},
-};
+use crate::renderer::{
+        RenderCommand, RenderEvent, Ui, core::RenderCore, surface::{Surface, SurfaceState}, ui::UiData
+    };
 
 pub trait RenderBackend {
     fn send_command(&self, command: RenderCommand);
     fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4);
-    fn update_ui(&mut self, ui: &mut Ui, timestep: Duration);
+    fn update_ui(&mut self, data: UiData);
     fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) -> bool;
     fn resize(&mut self, width: u32, height: u32);
     fn request_frame(&mut self, window: &Window);
@@ -102,8 +95,7 @@ impl RenderBackend for NativeBackend {
             .unwrap();
     }
 
-    fn update_ui(&mut self, ui: &mut Ui, timestep: Duration) {
-        let data = ui.build(self.surface.config(), timestep);
+    fn update_ui(&mut self, data: UiData) {
         self.render_tx.send(RenderCommand::UpdateUi { data }).unwrap();
     }
 
@@ -197,8 +189,7 @@ impl RenderBackend for WasmBackend {
         self.core.update_camera(position, view_projection_matrix);
     }
 
-    fn update_ui(&mut self, ui: &mut Ui, timestep: Duration) {
-        let data = ui.build(self.surface.config(), timestep);
+    fn update_ui(&mut self, data: UiData) {
         self.core.update_ui(data);
     }
 
