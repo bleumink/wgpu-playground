@@ -31,8 +31,8 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn new(view: wgpu::TextureView, context: &RenderContext) -> Self {
-        let encoder = context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    pub fn new(view: wgpu::TextureView, device: &wgpu::Device) -> Self {
+        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render encoder"),
         });
 
@@ -108,7 +108,7 @@ impl RenderCore {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: context.config.format.add_srgb_suffix(),
+                    format: wgpu::TextureFormat::Rgba16Float,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -163,7 +163,7 @@ impl RenderCore {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: context.config.format.add_srgb_suffix(),
+                    format: wgpu::TextureFormat::Rgba16Float,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -209,7 +209,7 @@ impl RenderCore {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: context.config.format.add_srgb_suffix(),
+                    format: wgpu::TextureFormat::Rgba16Float,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -302,11 +302,11 @@ impl RenderCore {
         self.scene.add_light(entity_id, light, &self.context);
     }
 
-    pub fn render_scene(&mut self, frame: &mut Frame) {
+    pub fn render_scene(&self, frame: &mut Frame) {
         let mut render_pass = frame.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &frame.view,
+                view: self.context.hdr.view(),
                 resolve_target: None,
                 // depth_slice: None, Reactivate with 26.0
                 ops: wgpu::Operations {
@@ -331,7 +331,6 @@ impl RenderCore {
             timestamp_writes: None,
         });
 
-        self.scene.sync(&self.context);
         render_pass.draw_scene(&self.scene, &self.camera.bind_group(), &self.pipeline_cache);
     }
 
@@ -373,10 +372,35 @@ impl RenderCore {
         }
     }
 
+    pub fn render_hdr(&self, frame: &mut Frame) {
+        let mut render_pass = frame.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("HDR render pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &frame.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_pipeline(self.context.hdr.pipeline());
+        render_pass.set_bind_group(0, self.context.hdr.bind_group(), &[]);
+        render_pass.draw(0..3, 0..1);
+    }
+
     pub fn render_frame(&mut self, view: wgpu::TextureView) {
-        let mut frame = Frame::new(view, &self.context);
+        self.scene.sync(&self.context);
+
+        let mut frame = Frame::new(view, &self.context.device);
         self.render_scene(&mut frame);
+        self.render_hdr(&mut frame);
         self.render_ui(&mut frame);
+        
         self.context.queue.submit(Some(frame.finish()));
     }
 

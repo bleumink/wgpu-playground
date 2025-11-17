@@ -1,9 +1,8 @@
 use std::cell::OnceCell;
 
-use crate::renderer::texture::Texture;
+use crate::renderer::{hdr::HdrPipeline, texture::Texture};
 
 pub struct RenderContext {
-    // pub window: Arc<Window>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
@@ -11,6 +10,7 @@ pub struct RenderContext {
     pub depth_texture: Texture,
     pub pending_resize: Option<wgpu::SurfaceConfiguration>,
     pub placeholder_texture: OnceCell<Texture>,
+    pub hdr: HdrPipeline,
 }
 
 impl RenderContext {
@@ -76,6 +76,7 @@ impl RenderContext {
 
         let placeholder_texture = OnceCell::new();
         let depth_texture = Texture::create_depth_texture(&device, &config, Some("Depth texture"));
+        let hdr = HdrPipeline::new(&device, &config);
 
         Ok(Self {
             // window,
@@ -86,6 +87,7 @@ impl RenderContext {
             depth_texture,
             pending_resize: None,
             placeholder_texture,
+            hdr,
         })
     }
 
@@ -100,5 +102,6 @@ impl RenderContext {
     pub fn resize(&mut self, config: wgpu::SurfaceConfiguration) {
         self.config = config;
         self.depth_texture = Texture::create_depth_texture(&self.device, &self.config, Some("Depth texture"));
+        self.hdr.resize(&self.device, &self.config);
     }
 }

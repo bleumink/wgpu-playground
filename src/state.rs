@@ -18,37 +18,16 @@ pub struct State {
     projection: Projection,
     loader: AssetLoader,
     timestamp: Instant,
-    is_running: bool,
     entities: HashMap<EntityId, Entity>,
     renderer: Renderer,
     event_queue: Vec<RenderEvent>,
-    // frame_jobs: Vec<Box<dyn FnMut(&mut State, Duration)>>,
 }
 
 impl State {
     pub async fn new(
         window: Arc<Window>,
-        // renderer: Renderer,
-        // surface: Surface,
-        // render_sender: Sender<RenderCommand>,
-        // error_receiver: Receiver<RenderEvent>,
-        // #[cfg(target_family = "wasm")] renderer: Renderer,
     ) -> anyhow::Result<Self> {
         let renderer = Renderer::new(Arc::clone(&window)).await;
-
-        // let mut frame_jobs: Vec<Box<dyn FnMut(&mut State, Duration)>> = Vec::new();
-        // let on_update = |state: &mut State, timestep: Duration| {
-        //     state.camera_controller.update_camera(&mut state.camera, timestep);
-        //     state.renderer
-        //         .send_command(RenderCommand::UpdateCamera {
-        //             position: state.camera.position(),
-        //             view_projection_matrix: state.projection.matrix() * state.camera.view_matrix(),
-        //         })
-        //         .unwrap();
-        // };
-
-        // frame_jobs.push(Box::new(on_update));
-
         let size = window.inner_size();
         let camera = Camera::new((0.0, 5.0, 10.0), 45.0_f32.to_radians(), -20.0_f32.to_radians());
         let projection = Projection::new(size.width, size.height, 60.0_f32.to_radians(), 0.1, 500.0);
@@ -105,20 +84,15 @@ impl State {
 
         Ok(Self {
             window,
-            // surface,
             ui,
             camera,
             camera_controller,
             projection,
             loader,
             entities,
-            timestamp: Instant::now(),
-            is_running: true,
-            // render_tx: render_sender,
-            // result_rx: error_receiver,
+            timestamp: Instant::now(),        
             renderer,
             event_queue: Vec::new(),
-            // frame_jobs,
         })
     }
 
