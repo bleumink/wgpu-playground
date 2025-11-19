@@ -104,3 +104,15 @@ pub struct LightUniform {
     pub kind: u32,
     _padding: [u32; 2],
 }
+
+impl LightUniform {
+    pub fn new(kind: u32, color: glam::Vec3, intensity: f32, cutoff: f32) -> Self {
+        Self {
+            color: color.to_array(),
+            cutoff,
+            intensity,
+            kind,
+            _padding: [0; 2],
+        }
+    }
+}

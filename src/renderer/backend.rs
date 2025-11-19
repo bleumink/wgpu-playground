@@ -13,10 +13,9 @@ use crate::renderer::{
 pub trait RenderBackend {
     fn send_command(&self, command: RenderCommand);
     fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4);
-    fn update_ui(&mut self, data: Option<UiData>);
-    fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) -> bool;
+    fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop);
     fn resize(&mut self, width: u32, height: u32);
-    fn request_frame(&mut self, window: &Window);
+    fn request_frame(&mut self, window: &Window, ui: Option<UiData>);
     fn is_configured(&self) -> bool;
     fn exit(&mut self);
 }
@@ -34,17 +33,14 @@ impl RenderBackend for NativeBackend {
         self.render_tx.send(command).ok();
     }
 
-    fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) -> bool {
-        let mut should_update = false;
+    fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 RenderEvent::FrameComplete => {
                     self.surface.present();
-                    should_update = true;
                 }
                 RenderEvent::ResizeComplete { config, device } => {
                     self.surface.apply_resize(config, device);
-                    should_update = true;
                 }
                 RenderEvent::LoadComplete { .. } => {
                     queue.push(event);
@@ -61,8 +57,6 @@ impl RenderBackend for NativeBackend {
                 }
             }
         }
-
-        should_update
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -70,11 +64,11 @@ impl RenderBackend for NativeBackend {
         self.render_tx.send(RenderCommand::Resize(config)).unwrap();
     }
 
-    fn request_frame(&mut self, window: &Window) {
+    fn request_frame(&mut self, window: &Window, ui: Option<UiData>) {
         if self.is_running {
             match self.surface.acquire() {
                 Ok(view) => {
-                    self.render_tx.send(RenderCommand::RenderFrame { view }).unwrap();
+                    self.render_tx.send(RenderCommand::RenderFrame { view, ui }).unwrap();
                 }
                 Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
                     let size = window.inner_size();
@@ -96,10 +90,6 @@ impl RenderBackend for NativeBackend {
                 view_projection_matrix,
             })
             .unwrap();
-    }
-
-    fn update_ui(&mut self, data: Option<UiData>) {
-        self.render_tx.send(RenderCommand::UpdateUi { data }).unwrap();
     }
 
     fn is_configured(&self) -> bool {
@@ -147,13 +137,12 @@ impl RenderBackend for WasmBackend {
         self.render_tx.send(command).ok();
     }
 
-    fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) -> bool {
+    fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) {
         if !self.is_running {
             event_loop.exit();
         }
 
         queue.extend(self.event_rx.try_iter());
-        true
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -163,7 +152,7 @@ impl RenderBackend for WasmBackend {
         self.core.update_config(config);
     }
 
-    fn request_frame(&mut self, window: &Window) {
+    fn request_frame(&mut self, window: &Window, ui: Option<UiData>) {
         if let Err(error) = self.core.run_wasm() {
             log::error!("Error handling renderer events: {}", error);
         }
@@ -184,16 +173,12 @@ impl RenderBackend for WasmBackend {
             }
         };
 
-        self.core.render_frame(view);
+        self.core.render_frame(view, ui);
         self.surface.present();
     }
 
     fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {
         self.core.update_camera(position, view_projection_matrix);
-    }
-
-    fn update_ui(&mut self, data: Option<UiData>) {
-        self.core.update_ui(data);
     }
 
     fn is_configured(&self) -> bool {

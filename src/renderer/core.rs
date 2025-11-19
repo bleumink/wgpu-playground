@@ -8,7 +8,7 @@ use crate::renderer::{
     camera::Camera,
     context::RenderContext,
     instance::Instance,
-    light::Light,
+    light::{Light, LightUniform},
     mesh::{MeshVertex, Scene, TextureCoordinate},
     pipeline::PipelineCache,
     pointcloud::{PointVertex, Pointcloud},
@@ -45,7 +45,6 @@ pub struct RenderCore {
     is_running: bool,
     context: RenderContext,
     camera: Camera,
-    ui_data: Option<UiData>,
     scene: SceneGraph,
     pipeline_cache: PipelineCache,
     egui_renderer: EguiRenderer,
@@ -245,7 +244,6 @@ impl RenderCore {
             is_running: true,
             context,
             camera,
-            ui_data: None,
             scene,
             pipeline_cache,
             egui_renderer,
@@ -332,42 +330,40 @@ impl RenderCore {
         render_pass.draw_scene(&self.scene, &self.camera.bind_group(), &self.pipeline_cache);
     }
 
-    pub fn render_ui(&mut self, frame: &mut Frame) {
-        if let Some(ui) = &self.ui_data {
-            for (id, image_delta) in ui.textures_delta.set.iter() {
-                self.egui_renderer
-                    .update_texture(&self.context.device, &self.context.queue, *id, image_delta);
-            }
-
-            self.egui_renderer.update_buffers(
-                &self.context.device,
-                &self.context.queue,
-                &mut frame.encoder,
-                &ui.paint_jobs,
-                &ui.screen_descriptor,
-            );
-
-            let render_pass = frame.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Egui render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &frame.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            self.egui_renderer.render(
-                &mut render_pass.forget_lifetime(),
-                &ui.paint_jobs,
-                &ui.screen_descriptor,
-            );
+    pub fn render_ui(&mut self, frame: &mut Frame, ui: UiData) {
+        for (id, image_delta) in ui.textures_delta.set.iter() {
+            self.egui_renderer
+                .update_texture(&self.context.device, &self.context.queue, *id, image_delta);
         }
+
+        self.egui_renderer.update_buffers(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
+            &ui.paint_jobs,
+            &ui.screen_descriptor,
+        );
+
+        let render_pass = frame.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Egui render pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &frame.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        self.egui_renderer.render(
+            &mut render_pass.forget_lifetime(),
+            &ui.paint_jobs,
+            &ui.screen_descriptor,
+        );
     }
 
     pub fn render_hdr(&self, frame: &mut Frame) {
@@ -391,13 +387,16 @@ impl RenderCore {
         render_pass.draw(0..3, 0..1);
     }
 
-    pub fn render_frame(&mut self, view: wgpu::TextureView) {
+    pub fn render_frame(&mut self, view: wgpu::TextureView, ui: Option<UiData>) {
         self.scene.sync(&self.context);
 
         let mut frame = Frame::new(view, &self.context.device);
         self.render_scene(&mut frame);
         self.render_hdr(&mut frame);
-        self.render_ui(&mut frame);
+
+        if let Some(data) = ui {
+            self.render_ui(&mut frame, data);
+        }
 
         self.context.queue.submit(Some(frame.finish()));
     }
@@ -410,14 +409,10 @@ impl RenderCore {
         self.context.resize(config);
     }
 
-    pub fn update_ui(&mut self, data: Option<UiData>) {
-        self.ui_data = data;
-    }
-
     pub fn handle_command(&mut self, command: RenderCommand) -> anyhow::Result<()> {
         match command {
-            RenderCommand::RenderFrame { view } => {
-                self.render_frame(view);
+            RenderCommand::RenderFrame { view, ui } => {
+                self.render_frame(view, ui);
                 self.result_tx.send(RenderEvent::FrameComplete)?;
 
                 if let Some(config) = self.context.pending_resize.take() {
@@ -428,7 +423,6 @@ impl RenderCore {
                 position,
                 view_projection_matrix,
             } => self.update_camera(position, view_projection_matrix),
-            RenderCommand::UpdateUi { data } => self.update_ui(data),
             RenderCommand::LoadAsset(asset) => self.load_asset(asset)?,
             RenderCommand::SpawnAsset {
                 entity_id,
@@ -446,6 +440,17 @@ impl RenderCore {
             RenderCommand::UpdateTransform { entity_id, transform } => {
                 let uniform = TransformUniform::new(transform);
                 self.scene.transforms.set(&entity_id, uniform, &self.context);
+            }
+            RenderCommand::UpdateLight {
+                entity_id,
+                kind,
+                color,
+                intensity,
+                cutoff,
+            } => {
+                // Need more controls
+                let uniform = LightUniform::new(1, color, intensity, cutoff);
+                self.scene.lights.set(&entity_id, uniform, &self.context);
             }
             RenderCommand::Stop => {
                 self.is_running = false;

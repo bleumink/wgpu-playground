@@ -42,13 +42,11 @@ mod worker;
 pub enum RenderCommand {
     RenderFrame {
         view: wgpu::TextureView,
+        ui: Option<UiData>,
     },
     UpdateCamera {
         position: glam::Vec3,
         view_projection_matrix: glam::Mat4,
-    },
-    UpdateUi {
-        data: Option<UiData>,
     },
     Resize(wgpu::SurfaceConfiguration),
     LoadAsset(AssetBuffer),
@@ -64,6 +62,13 @@ pub enum RenderCommand {
     UpdateTransform {
         entity_id: Uuid,
         transform: glam::Mat4,
+    },
+    UpdateLight {
+        entity_id: Uuid,
+        kind: u32,
+        color: glam::Vec3,
+        intensity: f32,
+        cutoff: f32,
     },
     Stop,
 }
@@ -117,16 +122,12 @@ impl Renderer {
         Self { render_tx, backend }
     }
 
-    pub fn request_frame(&mut self, window: &Window) {
-        self.backend.request_frame(window);
+    pub fn request_frame(&mut self, window: &Window, ui: Option<UiData>) {
+        self.backend.request_frame(window, ui);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         self.backend.resize(width, height);
-    }
-
-    pub fn update_ui(&mut self, data: Option<UiData>) {
-        self.backend.update_ui(data);
     }
 
     pub fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {
@@ -146,7 +147,8 @@ impl Renderer {
     }
 
     pub fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop) -> bool {
-        self.backend.poll_events(queue, event_loop)
+        self.backend.poll_events(queue, event_loop);
+        self.backend.is_configured()
     }
 
     pub fn send_command(&self, command: RenderCommand) -> anyhow::Result<()> {

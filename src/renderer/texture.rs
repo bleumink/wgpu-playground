@@ -181,7 +181,6 @@ pub struct TextureInstance {
 
 #[derive(Clone, Debug)]
 pub struct Texture {
-    #[allow(unused)]
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
@@ -404,3 +403,25 @@ impl Texture {
         Self { texture, view, sampler }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct CubeTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+}
+
+// impl CubeTexture {
+//     pub fn create_2d_texture(
+//         width: u32,
+//         height: u32,
+//         device: &wgpu::Device,
+//         format: wgpu::TextureFormat,
+//         sampler_descriptor: &wgpu::SamplerDescriptor,
+//         label: Option<&str>,
+//     ) -> Self {
+//         Self {
+
+//         }
+//     }
+// }

@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use glam::Vec4Swizzles;
 use instant::Instant;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
@@ -25,7 +26,9 @@ pub struct State {
     entities: HashMap<EntityId, Entity>,
     renderer: Renderer,
     event_queue: Vec<RenderEvent>,
-    average_fps: VecDeque<f32>,
+    fps: f32,
+    light_color: [u8; 3],
+    light_intensity: f32,
 }
 
 impl State {
@@ -96,14 +99,16 @@ impl State {
             timestamp: Instant::now(),
             renderer,
             event_queue: Vec::new(),
-            average_fps: VecDeque::new(),
+            fps: 0.0,
+            light_color: [230, 230, 153],
+            light_intensity: 100.0,
         })
     }
 
     pub fn update(&mut self, event_loop: &ActiveEventLoop) {
         self.window.request_redraw();
-        let should_update = self.renderer.poll_events(&mut self.event_queue, event_loop);
 
+        let should_update = self.renderer.poll_events(&mut self.event_queue, event_loop);
         for event in self.event_queue.drain(..) {
             match event {
                 RenderEvent::LoadComplete {
@@ -140,10 +145,32 @@ impl State {
             }
         }
 
-        if should_update && self.renderer.is_ready() {
+        if should_update {
             let timestep = self.timestamp.elapsed();
             self.timestamp = Instant::now();
-            let average_fps = self.average_fps(timestep);
+            let average_fps = self.update_fps(timestep).round();
+
+            // Debug
+            let light = self
+                .entities
+                .values_mut()
+                .find(|entity| entity.label().as_ref().unwrap() == "light")
+                .unwrap();
+
+            let position = light.transform().w_axis.truncate();
+            let rotation = glam::Quat::from_rotation_y(10.0_f32.to_radians() * timestep.as_secs_f32());
+            let new_position = rotation * position;
+            let transform = glam::Mat4::from_translation(new_position);
+            light.set_transform(transform);
+
+            self.renderer
+                .send_command(RenderCommand::UpdateTransform {
+                    entity_id: light.id(),
+                    transform,
+                })
+                .unwrap();
+
+            // end debug
 
             // UI
             let ctx = self.ui.begin_frame();
@@ -183,11 +210,39 @@ impl State {
                     if ui.button("Load Asset").clicked() {
                         open_file_dialog(self.loader.clone());
                     }
+                    ui.add_space(10.0);
+
+                    ui.label("Light color");
+                    if ui.color_edit_button_srgb(&mut self.light_color).changed() {
+                        self.renderer
+                            .send_command(RenderCommand::UpdateLight {
+                                entity_id: light.id(),
+                                kind: 1,
+                                color: glam::Vec3::from_array(self.light_color.map(|u| u as f32 / 255.0)),
+                                intensity: self.light_intensity,
+                                cutoff: 0.0,
+                            })
+                            .unwrap();
+                    }
+                    ui.label("Intensity");
+                    if ui
+                        .add(egui::Slider::new(&mut self.light_intensity, 0.0..=255.0))
+                        .changed()
+                    {
+                        self.renderer
+                            .send_command(RenderCommand::UpdateLight {
+                                entity_id: light.id(),
+                                kind: 1,
+                                color: glam::Vec3::from_array(self.light_color.map(|u| u as f32 / 255.0)),
+                                intensity: self.light_intensity,
+                                cutoff: 0.0,
+                            })
+                            .unwrap();
+                    }
                 });
             // End UI
 
             let ui_data = self.ui.end_frame();
-            self.renderer.update_ui(ui_data);
 
             self.camera_controller.update_camera(&mut self.camera, timestep);
             self.renderer.update_camera(
@@ -195,38 +250,14 @@ impl State {
                 self.projection.matrix() * self.camera.view_matrix(),
             );
 
-            // Debug
-            let light = self
-                .entities
-                .values_mut()
-                .find(|entity| entity.label().as_ref().unwrap() == "light")
-                .unwrap();
-
-            let position = light.transform().w_axis.truncate();
-            let rotation = glam::Quat::from_rotation_y(10.0_f32.to_radians() * timestep.as_secs_f32());
-            let new_position = rotation * position;
-            let transform = glam::Mat4::from_translation(new_position);
-            light.set_transform(transform);
-
-            self.renderer
-                .send_command(RenderCommand::UpdateTransform {
-                    entity_id: light.id(),
-                    transform,
-                })
-                .unwrap();
-            // end debug
-
-            self.renderer.request_frame(&self.window);
+            self.renderer.request_frame(&self.window, ui_data);
         }
     }
 
-    pub fn average_fps(&mut self, timestep: Duration) -> f32 {
-        self.average_fps.push_back(timestep.as_secs_f32());
-        if self.average_fps.len() > 10 {
-            self.average_fps.pop_front();
-        }
-
-        (1.0 / (self.average_fps.iter().sum::<f32>() / 10.0)).round()
+    pub fn update_fps(&mut self, timestep: Duration) -> f32 {
+        let current = 1.0 / timestep.as_secs_f32();
+        self.fps = self.fps * 0.9 + current * (1.0 - 0.9);
+        self.fps
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
