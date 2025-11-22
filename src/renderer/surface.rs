@@ -86,9 +86,7 @@ impl Surface {
     }
 
     pub fn acquire(&mut self) -> Result<wgpu::TextureView, wgpu::SurfaceError> {
-        if let SurfaceState::Configured = self.state
-            && let Some(surface) = &self.surface
-        {
+        if let Some(surface) = &self.surface {
             let output = surface.get_current_texture()?;
             let view = output.texture.create_view(&wgpu::TextureViewDescriptor {
                 format: Some(self.config.format.add_srgb_suffix()),
@@ -103,7 +101,7 @@ impl Surface {
     }
 
     pub fn present(&mut self) {
-        if let SurfaceState::Acquired(output) = std::mem::take(&mut self.state) {
+        if let SurfaceState::Acquired(output) = std::mem::replace(&mut self.state, SurfaceState::Configured) {
             if let Some((config, device)) = self.pending_resize.take()
                 && let Some(surface) = &self.surface
             {
@@ -114,8 +112,6 @@ impl Surface {
             } else {
                 output.present();
             }
-
-            self.state = SurfaceState::Configured;
         }
     }
 
@@ -152,6 +148,8 @@ impl Surface {
 
     pub fn drop(&mut self) {
         self.state = SurfaceState::Unconfigured;
-        self.surface = None;
+        if let Some(surface) = self.surface.take() {
+            drop(surface);
+        }
     }
 }

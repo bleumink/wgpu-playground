@@ -59,7 +59,11 @@ impl RenderCore {
         error_sender: Sender<RenderEvent>,
     ) -> anyhow::Result<Self> {
         let camera = Camera::new(&context);
-        let egui_renderer = EguiRenderer::new(&context.device, context.config.format.add_srgb_suffix(), None, 1, true);
+        let egui_renderer = EguiRenderer::new(
+            &context.device,
+            context.config.format.add_srgb_suffix(),
+            Default::default(),
+        );
         let scene = SceneGraph::new(&context);
         let mut pipeline_cache = PipelineCache::new();
 
@@ -304,7 +308,7 @@ impl RenderCore {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: self.context.hdr.view(),
                 resolve_target: None,
-                // depth_slice: None, Reactivate with 26.0
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: 0.1,
@@ -349,6 +353,7 @@ impl RenderCore {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &frame.view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -372,6 +377,7 @@ impl RenderCore {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &frame.view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -521,7 +527,7 @@ impl RenderCore {
         Ok(())
     }
 
-    pub fn run_wasm(&mut self) -> anyhow::Result<()> {
+    pub fn run_once(&mut self) -> anyhow::Result<()> {
         while let Ok(command) = self.render_rx.try_recv() {
             self.handle_command(command)?;
         }

@@ -17,11 +17,7 @@ impl RenderContext {
     pub const MAX_UV_SETS: usize = 6;
     pub const TEXTURE_COUNT: usize = 5;
 
-    pub async fn new(
-        // window: Arc<Window>,
-        adapter: &wgpu::Adapter,
-        config: wgpu::SurfaceConfiguration,
-    ) -> anyhow::Result<Self> {
+    pub async fn new(adapter: &wgpu::Adapter, config: wgpu::SurfaceConfiguration) -> anyhow::Result<Self> {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
@@ -31,6 +27,7 @@ impl RenderContext {
                 } else {
                     wgpu::Limits { ..Default::default() }
                 },
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
@@ -79,7 +76,6 @@ impl RenderContext {
         let hdr = HdrPipeline::new(&device, &config);
 
         Ok(Self {
-            // window,
             device,
             queue,
             config,

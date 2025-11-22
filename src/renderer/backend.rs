@@ -1,10 +1,8 @@
-use std::time::Duration;
-
 use crossbeam::channel::{Receiver, Sender};
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
 use crate::renderer::{
-    RenderCommand, RenderEvent, Ui,
+    RenderCommand, RenderEvent,
     core::RenderCore,
     surface::{Surface, SurfaceState},
     ui::UiData,
@@ -153,7 +151,7 @@ impl RenderBackend for WasmBackend {
     }
 
     fn request_frame(&mut self, window: &Window, ui: Option<UiData>) {
-        if let Err(error) = self.core.run_wasm() {
+        if let Err(error) = self.core.run_once() {
             log::error!("Error handling renderer events: {}", error);
         }
 
