@@ -32,7 +32,6 @@ serde = "1.0.226"
 thiserror = "2.0.17"
 uuid = { version = "1.18.1", features = ["rng-getrandom", "v4"] }
 wgpu = "27.0.1"
-#wgpu = "^25"
 winit = "0.30.12"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

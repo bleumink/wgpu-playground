@@ -142,6 +142,7 @@ impl WorkerTask for LoadTask {
 
     async fn run(self, scope: &DedicatedWorkerGlobalScope) {
         let path: ResourcePath = self.path.into();
+        let meta = js_sys::Object::new();
         let buffer = match self.kind {
             AssetKind::Obj => {
                 let scene = SceneBuffer::from_obj(&path).await.unwrap();
@@ -163,29 +164,36 @@ impl WorkerTask for LoadTask {
             AssetKind::EnvironmentMap => {
                 let data = path.load_binary().await.unwrap();
                 let buffer = HdrBuffer::from_hdr(&data);
+                js_sys::Reflect::set(&meta, &"width".into(), &JsValue::from(buffer.width)).unwrap();
+                js_sys::Reflect::set(&meta, &"height".into(), &JsValue::from(buffer.height)).unwrap();
                 js_sys::Uint8Array::new_from_slice(&buffer.pixels).buffer()
             }
         };
 
+        let object = js_sys::Object::new();
+        js_sys::Reflect::set(&object, &"data".into(), &buffer).unwrap();
+        js_sys::Reflect::set(&object, &"meta".into(), &meta).unwrap();
+
         scope
-            .post_message_with_transfer(&buffer, &js_sys::Array::of1(&buffer))
+            .post_message_with_transfer(&object, &js_sys::Array::of1(&buffer))
             .unwrap();
     }
 
     fn on_complete(&self, result: JsValue, sender: Sender<RenderCommand>, duration: Duration) {
-        let array = js_sys::Uint8Array::new(&result);
+        let data = js_sys::Reflect::get(&result, &"data".into()).unwrap();
+        let array = js_sys::Uint8Array::new(&data);
         let mut bytes = vec![0u8; array.length() as usize];
         array.copy_to(&mut bytes);
 
         let path: ResourcePath = self.path.clone().into();
-        let filename = path.file_name().to_string();
+        let file_name = path.file_name().to_string();
         match self.kind {
             AssetKind::Obj | AssetKind::Gltf => {
                 let scene = SceneBuffer::from_bytes(&bytes);
                 sender
                     .send(RenderCommand::LoadAsset(AssetBuffer::Scene(
                         scene,
-                        Some(filename.clone()),
+                        Some(file_name.clone()),
                     )))
                     .unwrap();
             }
@@ -195,16 +203,30 @@ impl WorkerTask for LoadTask {
                 sender
                     .send(RenderCommand::LoadAsset(AssetBuffer::Pointcloud(
                         pointcloud,
-                        Some(filename.clone()),
+                        Some(file_name.clone()),
                     )))
                     .unwrap();
             }
             AssetKind::EnvironmentMap => {
-                todo!();
+                let meta = js_sys::Reflect::get(&result, &"meta".into()).unwrap();
+                let width = js_sys::Reflect::get(&meta, &"width".into()).unwrap().as_f64().unwrap() as u32;
+                let height = js_sys::Reflect::get(&meta, &"height".into()).unwrap().as_f64().unwrap() as u32;
+                let buffer = HdrBuffer {
+                    pixels: bytes,
+                    width,
+                    height,
+                };
+
+                sender
+                    .send(RenderCommand::LoadAsset(AssetBuffer::EnvironmentMap {
+                        buffer,
+                        label: Some(file_name.clone()),
+                    }))
+                    .unwrap();
             }
         }
 
-        log::info!("Loaded {} in {} s", filename, duration.as_secs_f32());
+        log::info!("Loaded {} in {} s", file_name, duration.as_secs_f32());
     }
 }
 
