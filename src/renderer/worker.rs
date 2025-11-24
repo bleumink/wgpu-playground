@@ -12,6 +12,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::DedicatedWorkerGlobalScope;
 
 use crate::renderer::asset::{AssetBuffer, AssetKind, SerializableResourcePath};
+use crate::renderer::environment::HdrBuffer;
 use crate::renderer::mesh::SceneBuffer;
 use crate::renderer::pointcloud::PointcloudBuffer;
 use crate::renderer::{RenderCommand, ResourcePath};
@@ -159,6 +160,11 @@ impl WorkerTask for LoadTask {
                 let raw = bytemuck::cast_slice(pointcloud.points());
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
             }
+            AssetKind::EnvironmentMap => {
+                let data = path.load_binary().await.unwrap();
+                let buffer = HdrBuffer::from_hdr(&data);
+                js_sys::Uint8Array::new_from_slice(&buffer.pixels).buffer()
+            }
         };
 
         scope
@@ -192,6 +198,9 @@ impl WorkerTask for LoadTask {
                         Some(filename.clone()),
                     )))
                     .unwrap();
+            }
+            AssetKind::EnvironmentMap => {
+                todo!();
             }
         }
 
@@ -237,6 +246,7 @@ impl WorkerTask for UploadTask {
 
     async fn run(self, scope: &DedicatedWorkerGlobalScope) {
         let bytes = self.path.load_binary().await.unwrap();
+        let meta = js_sys::Object::new();
         let buffer = match self.kind {
             AssetKind::Obj => {
                 // TODO This does not work for uploads
@@ -254,17 +264,28 @@ impl WorkerTask for UploadTask {
                 let raw = bytemuck::cast_slice(pointcloud.points());
                 js_sys::Uint8Array::new_from_slice(raw).buffer()
             }
+            AssetKind::EnvironmentMap => {
+                let buffer = HdrBuffer::from_hdr(&bytes);
+                js_sys::Reflect::set(&meta, &"width".into(), &JsValue::from(buffer.width)).unwrap();
+                js_sys::Reflect::set(&meta, &"height".into(), &JsValue::from(buffer.height)).unwrap();
+                js_sys::Uint8Array::new_from_slice(&buffer.pixels).buffer()
+            }
         };
 
+        let object = js_sys::Object::new();
+        js_sys::Reflect::set(&object, &"data".into(), &buffer).unwrap();
+        js_sys::Reflect::set(&object, &"meta".into(), &meta).unwrap();
+
         scope
-            .post_message_with_transfer(&buffer, &js_sys::Array::of1(&buffer))
+            .post_message_with_transfer(&object, &js_sys::Array::of1(&buffer))
             .unwrap();
     }
 
     fn on_complete(&self, result: JsValue, sender: Sender<RenderCommand>, duration: Duration) {
         let file_name = self.path.file_name().to_string();
+        let data = js_sys::Reflect::get(&result, &"data".into()).unwrap();
 
-        let array = js_sys::Uint8Array::new(&result);
+        let array = js_sys::Uint8Array::new(&data);
         let mut bytes = vec![0u8; array.length() as usize];
         array.copy_to(&mut bytes);
 
@@ -286,6 +307,23 @@ impl WorkerTask for UploadTask {
                         pointcloud,
                         Some(file_name.clone()),
                     )))
+                    .unwrap();
+            }
+            AssetKind::EnvironmentMap => {
+                let meta = js_sys::Reflect::get(&result, &"meta".into()).unwrap();
+                let width = js_sys::Reflect::get(&meta, &"width".into()).unwrap().as_f64().unwrap() as u32;
+                let height = js_sys::Reflect::get(&meta, &"height".into()).unwrap().as_f64().unwrap() as u32;
+                let buffer = HdrBuffer {
+                    pixels: bytes,
+                    width,
+                    height,
+                };
+
+                sender
+                    .send(RenderCommand::LoadAsset(AssetBuffer::EnvironmentMap {
+                        buffer,
+                        label: Some(file_name.clone()),
+                    }))
                     .unwrap();
             }
         }

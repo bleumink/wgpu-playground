@@ -10,7 +10,7 @@ use crate::renderer::{
 
 pub trait RenderBackend {
     fn send_command(&self, command: RenderCommand);
-    fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4);
+    fn update_camera(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4);
     fn poll_events(&mut self, queue: &mut Vec<RenderEvent>, event_loop: &ActiveEventLoop);
     fn resize(&mut self, width: u32, height: u32);
     fn request_frame(&mut self, window: &Window, ui: Option<UiData>);
@@ -81,11 +81,12 @@ impl RenderBackend for NativeBackend {
         }
     }
 
-    fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {
+    fn update_camera(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4) {
         self.render_tx
             .send(RenderCommand::UpdateCamera {
                 position,
-                view_projection_matrix,
+                view,
+                projection,
             })
             .unwrap();
     }
@@ -175,8 +176,8 @@ impl RenderBackend for WasmBackend {
         self.surface.present();
     }
 
-    fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {
-        self.core.update_camera(position, view_projection_matrix);
+    fn update_camera(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4) {
+        self.core.update_camera(position, view, projection);
     }
 
     fn is_configured(&self) -> bool {

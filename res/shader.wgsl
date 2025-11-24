@@ -28,6 +28,8 @@ struct VertexOutput {
 struct CameraUniform {
     view_position: vec4<f32>,
     view_projection: mat4x4<f32>,
+    inv_view: mat4x4<f32>,
+    inv_projection: mat4x4<f32>,
 }
 
 struct TransformUniform {

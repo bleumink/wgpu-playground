@@ -43,6 +43,7 @@ impl State {
         let mut entities = HashMap::new();
 
         loader.load(ResourcePath::new("cube.obj").unwrap());
+        // loader.load(ResourcePath::new("pure-sky.hdr").unwrap());
         // loader.load(ResourcePath::new("1612_9070.laz"));
 
         let light = Light::Point {
@@ -247,7 +248,8 @@ impl State {
             self.camera_controller.update_camera(&mut self.camera, timestep);
             self.renderer.update_camera(
                 self.camera.position(),
-                self.projection.matrix() * self.camera.view_matrix(),
+                self.camera.view_matrix(),
+                self.projection.matrix(),
             );
 
             self.renderer.request_frame(&self.window, ui_data);

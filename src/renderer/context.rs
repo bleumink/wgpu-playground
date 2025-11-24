@@ -7,6 +7,8 @@ pub struct RenderContext {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub environment_bind_group_layout: wgpu::BindGroupLayout,
+    pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub depth_texture: Texture,
     pub pending_resize: Option<wgpu::SurfaceConfiguration>,
     pub placeholder_texture: OnceCell<Texture>,
@@ -71,6 +73,42 @@ impl RenderContext {
             entries: &bind_group_layout_entries,
         });
 
+        let environment_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Environment map bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
+
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Camera bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
         let placeholder_texture = OnceCell::new();
         let depth_texture = Texture::create_depth_texture(&device, &config, Some("Depth texture"));
         let hdr = HdrPipeline::new(&device, &config);
@@ -80,6 +118,8 @@ impl RenderContext {
             queue,
             config,
             texture_bind_group_layout,
+            environment_bind_group_layout,
+            camera_bind_group_layout,
             depth_texture,
             pending_resize: None,
             placeholder_texture,

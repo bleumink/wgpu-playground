@@ -7,6 +7,7 @@ use crate::renderer::{
     asset::AssetBuffer,
     camera::Camera,
     context::RenderContext,
+    environment::{EnvironmentMap, HdrLoader},
     instance::Instance,
     light::{Light, LightUniform},
     mesh::{MeshVertex, Scene, TextureCoordinate},
@@ -84,7 +85,11 @@ impl RenderCore {
 
         let render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render pipeline layout"),
-            bind_group_layouts: &[&context.texture_bind_group_layout, camera.layout(), scene.layout()],
+            bind_group_layouts: &[
+                &context.texture_bind_group_layout,
+                &context.camera_bind_group_layout,
+                scene.layout(),
+            ],
             push_constant_ranges: &[],
         });
 
@@ -109,7 +114,7 @@ impl RenderCore {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
+                    format: context.hdr.format(),
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -141,7 +146,11 @@ impl RenderCore {
 
         let pointcloud_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Pointcloud pipeline layout"),
-            bind_group_layouts: &[&context.texture_bind_group_layout, &camera.layout(), scene.layout()],
+            bind_group_layouts: &[
+                &context.texture_bind_group_layout,
+                &context.camera_bind_group_layout,
+                scene.layout(),
+            ],
             push_constant_ranges: &[],
         });
 
@@ -164,7 +173,7 @@ impl RenderCore {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
+                    format: context.hdr.format(),
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -192,7 +201,11 @@ impl RenderCore {
 
         let light_debug_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Debug light pipeline layout"),
-            bind_group_layouts: &[&context.texture_bind_group_layout, &camera.layout(), scene.layout()],
+            bind_group_layouts: &[
+                &context.texture_bind_group_layout,
+                &context.camera_bind_group_layout,
+                scene.layout(),
+            ],
             push_constant_ranges: &[],
         });
 
@@ -210,7 +223,7 @@ impl RenderCore {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
+                    format: context.hdr.format(),
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -262,6 +275,12 @@ impl RenderCore {
 
     fn load_asset(&mut self, asset: AssetBuffer) -> anyhow::Result<()> {
         match asset {
+            AssetBuffer::EnvironmentMap { buffer, label } => {
+                let loader = HdrLoader::new(&self.context.device);
+                let texture = loader.from_buffer(buffer, 1080, label.as_deref(), &self.context)?;
+                let environment_map = EnvironmentMap::new(texture, &self.context);
+                self.scene.set_environment_map(environment_map);
+            }
             AssetBuffer::Scene(buffer, label) => {
                 let scene = Scene::from_buffer(buffer, &self.context, label.clone());
                 let material_ids = scene
@@ -407,8 +426,8 @@ impl RenderCore {
         self.context.queue.submit(Some(frame.finish()));
     }
 
-    pub fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {
-        self.camera.update(position, view_projection_matrix, &self.context);
+    pub fn update_camera(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4) {
+        self.camera.update(position, view, projection, &self.context);
     }
 
     pub fn update_config(&mut self, config: wgpu::SurfaceConfiguration) {
@@ -427,8 +446,9 @@ impl RenderCore {
             }
             RenderCommand::UpdateCamera {
                 position,
-                view_projection_matrix,
-            } => self.update_camera(position, view_projection_matrix),
+                view,
+                projection,
+            } => self.update_camera(position, view, projection),
             RenderCommand::LoadAsset(asset) => self.load_asset(asset)?,
             RenderCommand::SpawnAsset {
                 entity_id,

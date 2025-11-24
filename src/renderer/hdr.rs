@@ -1,4 +1,11 @@
-use crate::renderer::texture::Texture;
+use std::io::Cursor;
+
+use image::{ImageDecoder, codecs::hdr::HdrDecoder};
+
+use crate::renderer::{
+    context::RenderContext,
+    texture::{CubeTexture, Texture},
+};
 
 pub struct HdrPipeline {
     pipeline: wgpu::RenderPipeline,
@@ -15,9 +22,9 @@ impl HdrPipeline {
         let format = wgpu::TextureFormat::Rgba16Float;
         let sampler = wgpu::SamplerDescriptor::default();
         let texture = Texture::create_2d_texture(
+            device,
             config.width,
             config.height,
-            device,
             format,
             &sampler,
             Some("HDR texture"),
@@ -108,9 +115,9 @@ impl HdrPipeline {
 
     pub fn resize(&mut self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
         self.texture = Texture::create_2d_texture(
+            device,
             config.width,
             config.height,
-            device,
             self.format,
             &wgpu::SamplerDescriptor::default(),
             Some("HDR texture"),

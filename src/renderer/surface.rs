@@ -116,11 +116,8 @@ impl Surface {
     }
 
     pub fn request_resize(&mut self, width: u32, height: u32) -> wgpu::SurfaceConfiguration {
-        match &mut self.state {
-            SurfaceState::Unconfigured | SurfaceState::Configured => {
-                self.state = SurfaceState::Resizing;
-            }
-            _ => (),
+        if let SurfaceState::Unconfigured | SurfaceState::Configured = &mut self.state {
+            self.state = SurfaceState::Resizing;
         }
 
         let mut config = self.config.clone();
@@ -148,8 +145,6 @@ impl Surface {
 
     pub fn drop(&mut self) {
         self.state = SurfaceState::Unconfigured;
-        if let Some(surface) = self.surface.take() {
-            drop(surface);
-        }
+        self.surface = None;
     }
 }

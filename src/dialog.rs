@@ -1,9 +1,10 @@
-use crate::renderer::{AssetLoader, ResourcePath};
+use crate::renderer::{AssetKind, AssetLoader, ResourcePath};
 
 fn create_dialog_future() -> impl Future<Output = Option<rfd::FileHandle>> {
     rfd::AsyncFileDialog::new()
-        .add_filter("Scene", &["obj", "gltf", "glb"])
-        .add_filter("Pointcloud", &["las", "laz"])
+        .add_filter("Scene", AssetKind::Gltf.extensions())
+        .add_filter("Pointcloud", AssetKind::Pointcloud.extensions())
+        .add_filter("Environment Map", AssetKind::EnvironmentMap.extensions())
         .pick_file()
 }
 

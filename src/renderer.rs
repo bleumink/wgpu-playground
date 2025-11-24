@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub use {
-    asset::{AssetLoader, ResourcePath},
+    asset::{AssetKind, AssetLoader, ResourcePath},
     light::Light,
     scene::RenderId,
     ui::Ui,
@@ -23,6 +23,7 @@ mod camera;
 mod component;
 mod context;
 mod core;
+mod environment;
 mod hdr;
 mod instance;
 mod light;
@@ -46,7 +47,8 @@ pub enum RenderCommand {
     },
     UpdateCamera {
         position: glam::Vec3,
-        view_projection_matrix: glam::Mat4,
+        view: glam::Mat4,
+        projection: glam::Mat4,
     },
     Resize(wgpu::SurfaceConfiguration),
     LoadAsset(AssetBuffer),
@@ -130,8 +132,8 @@ impl Renderer {
         self.backend.resize(width, height);
     }
 
-    pub fn update_camera(&mut self, position: glam::Vec3, view_projection_matrix: glam::Mat4) {
-        self.backend.update_camera(position, view_projection_matrix);
+    pub fn update_camera(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4) {
+        self.backend.update_camera(position, view, projection);
     }
 
     pub fn exit(&mut self) {

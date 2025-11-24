@@ -1,9 +1,10 @@
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, io::Cursor, path::Path};
 
 use crossbeam::channel::Sender;
 
 #[cfg(not(target_family = "wasm"))]
 use futures_lite::future;
+use image::{ImageDecoder, codecs::hdr::HdrDecoder};
 #[cfg(not(target_family = "wasm"))]
 use instant::Instant;
 
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_family = "wasm")]
 use crate::renderer::worker::{LoadTask, UploadTask, WorkerPool};
 
-use crate::renderer::{RenderCommand, mesh::SceneBuffer, pointcloud::PointcloudBuffer};
+use crate::renderer::{RenderCommand, environment::HdrBuffer, mesh::SceneBuffer, pointcloud::PointcloudBuffer};
 
 #[derive(Clone)]
 pub enum ResourcePath {
@@ -227,6 +228,7 @@ impl std::fmt::Display for ResourcePath {
 }
 
 pub enum AssetBuffer {
+    EnvironmentMap { buffer: HdrBuffer, label: Option<String> },
     Pointcloud(PointcloudBuffer, Option<String>),
     Scene(SceneBuffer, Option<String>),
 }
@@ -236,6 +238,7 @@ pub enum AssetKind {
     Obj,
     Gltf,
     Pointcloud,
+    EnvironmentMap,
 }
 
 impl AssetKind {
@@ -244,6 +247,7 @@ impl AssetKind {
             AssetKind::Obj => "obj",
             AssetKind::Gltf => "gltf",
             AssetKind::Pointcloud => "pointcloud",
+            AssetKind::EnvironmentMap => "environment_map",
         }
     }
 
@@ -252,16 +256,24 @@ impl AssetKind {
             "obj" => Some(AssetKind::Obj),
             "gltf" => Some(AssetKind::Gltf),
             "pointcloud" => Some(AssetKind::Pointcloud),
+            "environment_map" => Some(AssetKind::EnvironmentMap),
             _ => None,
         }
     }
 
     pub fn from_extension(extension: &str) -> Option<Self> {
-        match extension {
-            "obj" => Some(Self::Obj),
-            "gltf" | "glb" => Some(Self::Gltf),
-            "las" | "laz" => Some(Self::Pointcloud),
-            _ => None,
+        let extension = extension.to_ascii_lowercase();
+        [Self::Obj, Self::Gltf, Self::Pointcloud, Self::EnvironmentMap]
+            .into_iter()
+            .find(|kind| kind.extensions().contains(&extension.as_str()))
+    }
+
+    pub fn extensions(&self) -> &[&'static str] {
+        match self {
+            AssetKind::Obj => &["obj"],
+            AssetKind::Gltf => &["gltf", "glb"],
+            AssetKind::Pointcloud => &["las", "laz"],
+            AssetKind::EnvironmentMap => &["hdr", "exr"],
         }
     }
 }
@@ -303,6 +315,7 @@ impl AssetLoader {
             AssetKind::Obj => self.load_obj(path),
             AssetKind::Gltf => self.load_gltf(path),
             AssetKind::Pointcloud => self.load_pointcloud(path),
+            AssetKind::EnvironmentMap => self.load_skybox(path),
         }
     }
 
@@ -409,6 +422,48 @@ impl AssetLoader {
                 ResourcePath::Upload(_) => {
                     self.worker_pool.submit(UploadTask {
                         kind: AssetKind::Pointcloud,
+                        path,
+                    });
+                }
+            };
+        }
+    }
+
+    fn load_skybox(&self, path: ResourcePath) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let sender = self.render_tx.clone();
+            let timestamp = Instant::now();
+            let filename = path.file_name().to_string();
+
+            std::thread::spawn(move || {
+                use crate::renderer::environment::HdrBuffer;
+
+                let data = future::block_on(path.load_binary()).unwrap();
+                let buffer = HdrBuffer::from_hdr(&data);
+
+                sender
+                    .send(RenderCommand::LoadAsset(AssetBuffer::EnvironmentMap {
+                        buffer,
+                        label: Some(filename),
+                    }))
+                    .unwrap();
+                log::info!("Loaded {} in {} s", path, timestamp.elapsed().as_secs_f32());
+            });
+        }
+
+        #[cfg(target_family = "wasm")]
+        {
+            match path {
+                ResourcePath::File(_) | ResourcePath::Url(_) => {
+                    self.worker_pool.submit(LoadTask {
+                        kind: AssetKind::EnvironmentMap,
+                        path: path.as_serializable().unwrap(),
+                    });
+                }
+                ResourcePath::Upload(_) => {
+                    self.worker_pool.submit(UploadTask {
+                        kind: AssetKind::EnvironmentMap,
                         path,
                     });
                 }
