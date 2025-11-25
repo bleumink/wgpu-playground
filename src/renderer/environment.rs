@@ -1,35 +1,164 @@
 use std::io::Cursor;
 
+use half::f16;
 use image::{ImageDecoder, codecs::hdr::HdrDecoder};
 
 use crate::renderer::{
-    camera::Camera,
     context::RenderContext,
     texture::{CubeTexture, Texture},
 };
 
-pub struct EnvironmentMap {
+pub struct IrradianceMap {
     texture: CubeTexture,
+    bind_group: wgpu::BindGroup,
+}
+
+impl IrradianceMap {
+    pub fn default(context: &RenderContext) -> CubeTexture {
+        let data: [f16; 4] = [
+            f16::from_f32(0.03), 
+            f16::from_f32(0.03), 
+            f16::from_f32(0.03), 
+            f16::from_f32(1.0), 
+        ];
+
+        CubeTexture::create_placeholder(&context.device, &context.queue, &data, wgpu::FilterMode::Linear)     
+    }
+
+    pub fn new(environment_map: &CubeTexture, context: &RenderContext) -> CubeTexture {
+        let label = Some("Irradiance map");
+        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            label,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let destination = CubeTexture::create_2d_texture(
+            &context.device,
+            environment_map.texture().width(),
+            environment_map.texture().height(),
+            wgpu::TextureFormat::Rgba16Float,
+            sampler,
+            Some("Irradiance map"),
+        );
+
+        let dest_view = destination.texture().create_view(&wgpu::TextureViewDescriptor {
+            label,
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: Some(6),
+            ..Default::default()
+        });
+
+        let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Irradiance shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../res/irradiance.wgsl").into()),
+        });
+
+        let bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Irradiance bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Irradiance map pipeline layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = context.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Irradiance compute pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("irradiance_convolution"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(environment_map.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(environment_map.sampler())
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&dest_view),
+                },
+            ],
+        });
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label,
+                timestamp_writes: None,
+            });
+            let num_workgroup = (environment_map.texture().width() + 7) / 8;
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.dispatch_workgroups(num_workgroup, num_workgroup, 6);
+        }
+
+        context.queue.submit(Some(encoder.finish()));
+        destination
+    }
+}
+
+pub struct EnvironmentMap {
+    environment: CubeTexture,
+    irradiance: CubeTexture,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
 }
 
 impl EnvironmentMap {
-    pub fn new(texture: CubeTexture, context: &RenderContext) -> Self {
-        let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Environment map bind group"),
-            layout: &context.environment_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(texture.view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(texture.sampler()),
-                },
-            ],
-        });
+    pub fn default(context: &RenderContext) -> Self {
+        let environment = CubeTexture::create_placeholder(&context.device, &context.queue, &[0.1f32,0.2,0.3,1.0], wgpu::FilterMode::Nearest);
+        Self::new(environment, context)
+    }
+
+    pub fn new(environment: CubeTexture, context: &RenderContext) -> Self {
+        let irradiance = IrradianceMap::default(context);
+        let bind_group = Self::create_bind_group(&environment, &irradiance, context);
 
         let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skybox shader"),
@@ -90,7 +219,8 @@ impl EnvironmentMap {
         });
 
         Self {
-            texture,
+            environment,
+            irradiance,
             bind_group,
             pipeline,
         }
@@ -102,6 +232,36 @@ impl EnvironmentMap {
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
         &self.pipeline
+    }
+
+    pub fn compute_irradiance(&mut self, context: &RenderContext) {
+        self.irradiance = IrradianceMap::new(&self.environment, context);
+        self.bind_group = Self::create_bind_group(&self.environment, &self.irradiance, context)
+    }
+
+    fn create_bind_group(environment: &CubeTexture, irradiance: &CubeTexture, context: &RenderContext) -> wgpu::BindGroup {
+        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Environment map bind group"),
+            layout: &context.environment_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(environment.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(environment.sampler()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(irradiance.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(irradiance.sampler()),
+                },
+            ],
+        })
     }
 }
 
@@ -217,8 +377,20 @@ impl HdrLoader {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let source = Texture { texture, sampler, view };
 
+        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            label,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         let destination =
-            CubeTexture::create_2d_texture(&context.device, dest_size, dest_size, self.texture_format, label);
+            CubeTexture::create_2d_texture(&context.device, dest_size, dest_size, self.texture_format, sampler, label);
+        
         let dest_view = destination.texture().create_view(&wgpu::TextureViewDescriptor {
             label,
             dimension: Some(wgpu::TextureViewDimension::D2Array),

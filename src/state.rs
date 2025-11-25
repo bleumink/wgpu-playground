@@ -83,10 +83,10 @@ impl State {
         let directional_transform = directional.to_transform();
         let directional_entity = Entity::new(directional_transform, Some("dir_light".to_string()));
 
-        renderer.send_command(RenderCommand::SpawnLight {
-            entity_id: directional_entity.id(),
-            light: directional,
-        })?;
+        // renderer.send_command(RenderCommand::SpawnLight {
+        //     entity_id: directional_entity.id(),
+        //     light: directional,
+        // })?;
         entities.insert(directional_entity.id(), directional_entity);
 
         Ok(Self {

@@ -416,6 +416,18 @@ impl Texture {
     }
 }
 
+pub trait CubemapData {
+    const FORMAT: wgpu::TextureFormat;
+}
+
+impl CubemapData for f32 {
+    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+}
+
+impl CubemapData for half::f16 {
+    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+}
+
 #[derive(Clone, Debug)]
 pub struct CubeTexture {
     pub texture: wgpu::Texture,
@@ -429,7 +441,7 @@ impl CubeTexture {
         width: u32,
         height: u32,
         format: wgpu::TextureFormat,
-        // sampler_descriptor: &wgpu::SamplerDescriptor,
+        sampler: wgpu::Sampler,
         label: Option<&str>,
     ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -454,13 +466,68 @@ impl CubeTexture {
             ..Default::default()
         });
 
+        Self { texture, view, sampler }
+    }
+
+    pub fn create_placeholder<T: Pod + CubemapData>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        value: &[T; 4],
+        filter_mode: wgpu::FilterMode,
+    ) -> Self {
+        let size = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 6,
+        };
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Placeholder cubemap"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: T::FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        for layer in 0..6 {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(value),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: T::FORMAT.target_pixel_byte_cost(),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Placeholder cubemap view"),
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            array_layer_count: Some(6),
+            ..Default::default()
+        });
+
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label,
+            label: Some("Placeholder sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: filter_mode,
+            min_filter: filter_mode,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });

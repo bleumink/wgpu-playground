@@ -82,6 +82,5 @@ fn equirect_to_cubemap(
 
     // We use textureLoad() as textureSample() is not allowed in compute shaders
     var sample = textureLoad(src, eq_pixel, 0);
-
     textureStore(dst, gid.xy, gid.z, sample);
 }

@@ -89,6 +89,7 @@ impl RenderCore {
                 &context.texture_bind_group_layout,
                 &context.camera_bind_group_layout,
                 scene.layout(),
+                &context.environment_bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -278,7 +279,8 @@ impl RenderCore {
             AssetBuffer::EnvironmentMap { buffer, label } => {
                 let loader = HdrLoader::new(&self.context.device);
                 let texture = loader.from_buffer(buffer, 1080, label.as_deref(), &self.context)?;
-                let environment_map = EnvironmentMap::new(texture, &self.context);
+                let mut environment_map = EnvironmentMap::new(texture, &self.context);
+                environment_map.compute_irradiance(&self.context);
                 self.scene.set_environment_map(environment_map);
             }
             AssetBuffer::Scene(buffer, label) => {

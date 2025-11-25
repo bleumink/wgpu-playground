@@ -63,7 +63,6 @@ var<storage, read> lights: array<LightUniform>;
 @group(2) @binding(3)
 var<storage, read> light_transform_index: array<u32>;
 
-
 @vertex
 fn vs_main(
     mesh: VertexInput,
@@ -115,6 +114,9 @@ struct LightModel {
 @group(0) @binding(8) var occlusion_sampler: sampler;
 @group(0) @binding(9) var emissive_texture: texture_2d<f32>;
 @group(0) @binding(10) var emissive_sampler: sampler;
+
+@group(3) @binding(2) var irradiance_map: texture_cube<f32>;
+@group(3) @binding(3) var irradiance_sampler: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {       
@@ -188,8 +190,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         lo += (diffuse + specular) * radiance * n_dot_l;
     }
 
-    let ambient = vec3<f32>(0.001) * albedo * occlusion;
-    var color = lo + ambient;
+    let irradiance = textureSample(irradiance_map, irradiance_sampler, n).rgb;
+    let kd = (vec3<f32>(1.0) - f0) * (1.0 - metallic);
+    let diffuse = irradiance * albedo * kd;
+    // let ambient = vec3<f32>(0.001) * albedo * occlusion;
+    var color = lo + diffuse;
 
     // Tone map and gamma correct
     let mapped = color / (color + vec3<f32>(1.0));

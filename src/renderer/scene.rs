@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::renderer::{
     component::{ComponentId, ComponentStore, HostComponentStore, RelationStore},
     context::RenderContext,
-    environment::EnvironmentMap,
+    environment::{self, EnvironmentMap},
     instance::{Instance, InstancePool},
     light::{Light, LightId, LightUniform},
     material::Material,
@@ -91,7 +91,7 @@ pub struct SceneGraph {
     pub node_normal_index: RelationStore<RenderId, NormalUniform>,
     pub lights_transform_index: RelationStore<LightUniform, TransformUniform>,
 
-    pub environment_map: Option<EnvironmentMap>,
+    pub environment_map: EnvironmentMap,
     pub instance_pool: InstancePool,
     pub render_batches: Vec<RenderBatch>,
     pub debug_id: RenderId,
@@ -199,7 +199,7 @@ impl SceneGraph {
             geometries,
             materials,
 
-            environment_map: None,
+            environment_map: EnvironmentMap::default(context),
             instance_pool,
             render_batches: Vec::new(),
             debug_id,
@@ -265,7 +265,7 @@ impl SceneGraph {
     }
 
     pub fn set_environment_map(&mut self, environment_map: EnvironmentMap) {
-        self.environment_map = Some(environment_map);
+        self.environment_map = environment_map;
     }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
@@ -401,14 +401,14 @@ where
         pipeline_cache: &'b PipelineCache,
     ) {
         self.set_bind_group(1, camera_bind_group, &[]);
-
-        if let Some(environment_map) = &scene.environment_map {
-            self.set_pipeline(environment_map.pipeline());
-            self.set_bind_group(0, environment_map.bind_group(), &[]);
-            self.draw(0..3, 0..1);
-        }
+        
+        self.set_pipeline(scene.environment_map.pipeline());
+        self.set_bind_group(0, scene.environment_map.bind_group(), &[]);
+        self.draw(0..3, 0..1);
 
         self.set_bind_group(2, scene.bind_group(), &[]);
+        self.set_bind_group(3, scene.environment_map.bind_group(), &[]);
+
         self.set_vertex_buffer(7, scene.instance_pool.buffer().slice(..));
 
         for batch in &scene.render_batches {

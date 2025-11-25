@@ -170,9 +170,10 @@ impl WorkerTask for LoadTask {
             }
         };
 
-        let object = js_sys::Object::new();
-        js_sys::Reflect::set(&object, &"data".into(), &buffer).unwrap();
-        js_sys::Reflect::set(&object, &"meta".into(), &meta).unwrap();
+        let object = js_object!({
+            "data": &buffer,
+            "meta": &meta,
+        });
 
         scope
             .post_message_with_transfer(&object, &js_sys::Array::of1(&buffer))
@@ -294,9 +295,10 @@ impl WorkerTask for UploadTask {
             }
         };
 
-        let object = js_sys::Object::new();
-        js_sys::Reflect::set(&object, &"data".into(), &buffer).unwrap();
-        js_sys::Reflect::set(&object, &"meta".into(), &meta).unwrap();
+        let object = js_object!({
+            "data": &buffer,
+            "meta": &meta,
+        });
 
         scope
             .post_message_with_transfer(&object, &js_sys::Array::of1(&buffer))
