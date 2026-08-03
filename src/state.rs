@@ -42,7 +42,7 @@ impl State {
         let ui = Ui::new(Arc::clone(&window));
         let mut entities = HashMap::new();
 
-        loader.load(ResourcePath::new("cube.obj").unwrap());
+        // loader.load(ResourcePath::new("cube.obj").unwrap());
         // loader.load(ResourcePath::new("pure-sky.hdr").unwrap());
         // loader.load(ResourcePath::new("1612_9070.laz"));
 
@@ -56,15 +56,15 @@ impl State {
             intensity: 100.0,
         };
 
-        let transform = light.to_transform();
-        let entity = Entity::new(transform, Some("light".to_string()));
+        // let transform = light.to_transform();
+        // let entity = Entity::new(transform, Some("light".to_string()));
 
-        renderer.send_command(RenderCommand::SpawnLight {
-            entity_id: entity.id(),
-            light,
-        })?;
+        // renderer.send_command(RenderCommand::SpawnLight {
+        //     entity_id: entity.id(),
+        //     light,
+        // })?;
         // render_sender.send()?;
-        entities.insert(entity.id(), entity);
+        // entities.insert(entity.id(), entity);
 
         let directional = Light::Directional {
             direction: glam::Vec3 {
@@ -80,14 +80,14 @@ impl State {
             intensity: 1.0,
         };
 
-        let directional_transform = directional.to_transform();
-        let directional_entity = Entity::new(directional_transform, Some("dir_light".to_string()));
+        // let directional_transform = directional.to_transform();
+        // let directional_entity = Entity::new(directional_transform, Some("dir_light".to_string()));
 
         // renderer.send_command(RenderCommand::SpawnLight {
         //     entity_id: directional_entity.id(),
         //     light: directional,
         // })?;
-        entities.insert(directional_entity.id(), directional_entity);
+        // entities.insert(directional_entity.id(), directional_entity);
 
         Ok(Self {
             window,
@@ -113,7 +113,7 @@ impl State {
         for event in self.event_queue.drain(..) {
             match event {
                 RenderEvent::LoadComplete {
-                    render_id,
+                    node_id,
                     transform,
                     label,
                 } => {
@@ -122,7 +122,7 @@ impl State {
                             self.renderer
                                 .send_command(RenderCommand::SpawnAsset {
                                     entity_id: entity.id(),
-                                    render_id,
+                                    render_id: node_id,
                                     transform: entity.transform(),
                                 })
                                 .unwrap();
@@ -135,7 +135,7 @@ impl State {
                         self.renderer
                             .send_command(RenderCommand::SpawnAsset {
                                 entity_id: entity.id(),
-                                render_id,
+                                render_id: node_id,
                                 transform,
                             })
                             .unwrap();
@@ -152,24 +152,24 @@ impl State {
             let average_fps = self.update_fps(timestep).round();
 
             // Debug
-            let light = self
-                .entities
-                .values_mut()
-                .find(|entity| entity.label().as_ref().unwrap() == "light")
-                .unwrap();
+            // let light = self
+            //     .entities
+            //     .values_mut()
+            //     .find(|entity| entity.label().as_ref().unwrap() == "light")
+            //     .unwrap();
 
-            let position = light.transform().w_axis.truncate();
-            let rotation = glam::Quat::from_rotation_y(10.0_f32.to_radians() * timestep.as_secs_f32());
-            let new_position = rotation * position;
-            let transform = glam::Mat4::from_translation(new_position);
-            light.set_transform(transform);
+            // let position = light.transform().w_axis.truncate();
+            // let rotation = glam::Quat::from_rotation_y(10.0_f32.to_radians() * timestep.as_secs_f32());
+            // let new_position = rotation * position;
+            // let transform = glam::Mat4::from_translation(new_position);
+            // light.set_transform(transform);
 
-            self.renderer
-                .send_command(RenderCommand::UpdateTransform {
-                    entity_id: light.id(),
-                    transform,
-                })
-                .unwrap();
+            // self.renderer
+            //     .send_command(RenderCommand::UpdateTransform {
+            //         entity_id: light.id(),
+            //         transform,
+            //     })
+            //     .unwrap();
 
             // end debug
 
@@ -213,33 +213,33 @@ impl State {
                     }
                     ui.add_space(10.0);
 
-                    ui.label("Light color");
-                    if ui.color_edit_button_srgb(&mut self.light_color).changed() {
-                        self.renderer
-                            .send_command(RenderCommand::UpdateLight {
-                                entity_id: light.id(),
-                                kind: 1,
-                                color: glam::Vec3::from_array(self.light_color.map(|u| u as f32 / 255.0)),
-                                intensity: self.light_intensity,
-                                cutoff: 0.0,
-                            })
-                            .unwrap();
-                    }
-                    ui.label("Intensity");
-                    if ui
-                        .add(egui::Slider::new(&mut self.light_intensity, 0.0..=255.0))
-                        .changed()
-                    {
-                        self.renderer
-                            .send_command(RenderCommand::UpdateLight {
-                                entity_id: light.id(),
-                                kind: 1,
-                                color: glam::Vec3::from_array(self.light_color.map(|u| u as f32 / 255.0)),
-                                intensity: self.light_intensity,
-                                cutoff: 0.0,
-                            })
-                            .unwrap();
-                    }
+                    // ui.label("Light color");
+                    // if ui.color_edit_button_srgb(&mut self.light_color).changed() {
+                    //     self.renderer
+                    //         .send_command(RenderCommand::UpdateLight {
+                    //             entity_id: light.id(),
+                    //             kind: 1,
+                    //             color: glam::Vec3::from_array(self.light_color.map(|u| u as f32 / 255.0)),
+                    //             intensity: self.light_intensity,
+                    //             cutoff: 0.0,
+                    //         })
+                    //         .unwrap();
+                    // }
+                    // ui.label("Intensity");
+                    // if ui
+                    //     .add(egui::Slider::new(&mut self.light_intensity, 0.0..=255.0))
+                    //     .changed()
+                    // {
+                    //     self.renderer
+                    //         .send_command(RenderCommand::UpdateLight {
+                    //             entity_id: light.id(),
+                    //             kind: 1,
+                    //             color: glam::Vec3::from_array(self.light_color.map(|u| u as f32 / 255.0)),
+                    //             intensity: self.light_intensity,
+                    //             cutoff: 0.0,
+                    //         })
+                    //         .unwrap();
+                    // }
                 });
             // End UI
 

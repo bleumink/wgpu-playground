@@ -24,7 +24,7 @@ fn face_uv_to_dir(face : u32, uv : vec2<f32>) -> vec3<f32> {
         case 2u: { return normalize(vec3<f32>( sc,    1.0,   tc)); } // +Y
         case 3u: { return normalize(vec3<f32>( sc,   -1.0,  -tc)); } // -Y
         case 4u: { return normalize(vec3<f32>( sc,   -tc,   1.0)); } // +Z
-        default: { return normalize(vec3<f32>(-sc,  -tc,  -1.0));  } // -Z
+        default: { return normalize(vec3<f32>(-sc,   -tc,  -1.0)); } // -Z
     }
 }
 

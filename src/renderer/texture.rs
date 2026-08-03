@@ -1,9 +1,14 @@
+use std::{collections::{BTreeMap, HashMap}, num::NonZeroU32};
+
 use bytemuck::{Pod, Zeroable};
 use gltf::{
     image::Format as GltfImageFormat,
     texture::{MagFilter, MinFilter, WrappingMode},
 };
 use image::GenericImageView;
+use rectangle_pack::{GroupedRectsToPlace, PackedLocation, RectToInsert};
+
+use crate::renderer::{context::RenderContext, mesh::TextureCoordinate};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
@@ -42,18 +47,6 @@ impl TextureFormat {
             _ => panic!("Unsupported texture format"),
         }
     }
-
-    // pub fn to_wgpu(self) -> wgpu::TextureFormat {
-    //     match self {
-    //         Self::RGBA8_SRGB => wgpu::TextureFormat::Rgba8UnormSrgb,
-    //         Self::RGB8_SRGB => wgpu::TextureFormat::Rgba8UnormSrgb,
-    //         Self::RGBA8 => wgpu::TextureFormat::Rgba8Unorm,
-    //         Self::RGB8 => wgpu::TextureFormat::Rgba8Unorm,
-    //         Self::RG8 => wgpu::TextureFormat::Rg8Unorm,
-    //         Self::R8 => wgpu::TextureFormat::R8Unorm,
-    //         _ => panic!("Unsupported texture format"),
-    //     }
-    // }
 }
 
 #[derive(Debug)]
@@ -74,7 +67,7 @@ impl TextureView<'_> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Pod, Zeroable)]
 pub struct Sampler {
     pub mag_filter: u8,
     pub min_filter: u8,
@@ -158,7 +151,7 @@ impl Sampler {
         }
     }
 
-    pub fn desc(&self) -> wgpu::SamplerDescriptor<'_> {
+    pub fn to_wgpu_descriptor(&self) -> wgpu::SamplerDescriptor<'_> {
         let (mag_filter, min_filter, mipmap_filter) = self.get_filters();
 
         wgpu::SamplerDescriptor {
@@ -173,11 +166,394 @@ impl Sampler {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct TextureInstance {
-    pub texture: Texture,
+// pub struct TextureData {
+//     width: u32,
+//     height: u32,
+//     format: TextureFormat,
+//     data: Vec<u8>,
+//     is_srgb: bool,
+// }
+
+// impl From<TextureView<'_>> for TextureData {
+//     fn from(value: TextureView) -> Self {
+//         Self {
+//             width: value.width,
+//             height: value.height,
+//             format: value.format,
+//             data: value.texture.to_vec(),
+//             is_srgb: value.is_srgb,
+//         }
+//     }
+// }
+
+// #[derive(Copy, Clone, Debug)]
+// pub struct TextureHandle {
+//     pub texture_index: u32,
+//     pub sampler_index: u32,
+//     pub uv_index: u32,
+// }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct TextureHandle {
+    pub atlas_index: u32,
     pub uv_index: u32,
+    pub sampler_index: u32,
+    pub uv_min: TextureCoordinate,
+    pub uv_max: TextureCoordinate,
 }
+
+impl Default for TextureHandle {
+    fn default() -> Self {
+        Self {
+            atlas_index: 0,
+            uv_index: 0,
+            sampler_index: 0,
+            uv_min: TextureCoordinate::default(),
+            uv_max: TextureCoordinate::default(),
+        }        
+    }
+}
+
+pub trait GltfTextureInfo {
+    fn texture(&self) -> gltf::Texture<'_>;
+    fn tex_coord(&self) -> u32;
+}
+
+impl GltfTextureInfo for gltf::texture::Info<'_> {
+    fn texture(&self) -> gltf::Texture<'_> {
+        self.texture()
+    }
+    fn tex_coord(&self) -> u32 {
+        self.tex_coord()
+    }
+}
+
+impl GltfTextureInfo for gltf::material::NormalTexture<'_> {
+    fn texture(&self) -> gltf::Texture<'_> {
+        self.texture()
+    }
+    fn tex_coord(&self) -> u32 {
+        self.tex_coord()
+    }
+}
+
+impl GltfTextureInfo for gltf::material::OcclusionTexture<'_> {
+    fn texture(&self) -> gltf::Texture<'_> {
+        self.texture()
+    }
+    fn tex_coord(&self) -> u32 {
+        self.tex_coord()
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct TextureReference {
+    pub texture_index: u32,
+    pub uv_index: u32,
+    pub sampler_index: u32,
+}
+
+unsafe impl bytemuck::ZeroableInOption for TextureReference {}
+unsafe impl bytemuck::PodInOption for TextureReference {}
+
+impl Default for TextureReference {
+    fn default() -> Self {
+        Self {
+            texture_index: 0,
+            uv_index: 0,
+            sampler_index: 0,
+        }
+    }
+}
+
+impl TextureReference {
+    pub fn from_gltf<T: GltfTextureInfo>(texture_info: Option<T>) -> Option<Self> {
+        texture_info.and_then(|texture_info| {
+            let slot = Self {
+                texture_index: texture_info.texture().source().index() as u32,
+                uv_index: texture_info.tex_coord() as u32,
+                sampler_index: texture_info.texture().sampler().index().unwrap_or(0) as u32,
+            };
+            Some(slot)
+        })
+    }
+}
+
+pub struct SamplerPool {
+    samplers: Vec<wgpu::Sampler>,
+    cache: HashMap<Sampler, u32>,
+}
+
+impl SamplerPool {
+    pub fn new() -> Self {
+        Self {
+            samplers: Vec::new(),
+            cache: HashMap::new(),
+        }
+    }
+
+    pub fn get_or_create(&mut self, sampler: Sampler, context: &RenderContext) -> u32 {
+        if let Some(&sampler) = self.cache.get(&sampler) {
+            return sampler;
+        }
+
+        let wgpu_sampler = context.device.create_sampler(&sampler.to_wgpu_descriptor());
+        let index = self.samplers.len() as u32;
+        
+        self.samplers.push(wgpu_sampler);
+        self.cache.insert(sampler, index);
+
+        index
+    }
+
+    pub fn get_by_index(&self, index: usize) -> Option<&wgpu::Sampler> {
+        self.samplers.get(index)
+    }
+
+    pub fn samplers(&self) -> &[wgpu::Sampler] {
+        &self.samplers
+    }
+}
+
+struct PackedRegion {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    uv_min: TextureCoordinate,
+    uv_max: TextureCoordinate,
+}
+
+pub struct TextureAtlas {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,    
+    source: image::RgbaImage,
+    atlas_size: u32,
+    padding_size: u32,
+
+    packer: GroupedRectsToPlace<u32>,
+    packed_locations: Vec<PackedRegion>,
+
+    samplers: SamplerPool,
+    bind_group: wgpu::BindGroup,
+    layout: wgpu::BindGroupLayout,    
+    is_dirty: bool,
+}
+
+impl TextureAtlas {
+    pub fn new(atlas_size: u32, padding_size: u32, context: &RenderContext) -> Self {
+        let source = image::RgbaImage::new(atlas_size, atlas_size);
+        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Texture atlas"),
+            size: wgpu::Extent3d {
+                width: atlas_size,
+                height: atlas_size,
+                depth_or_array_layers: 1,                
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[]
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Texture atlas layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { 
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, 
+                        view_dimension: wgpu::TextureViewDimension::D2, 
+                        multisampled: false
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ]
+        });
+
+        let mut samplers = SamplerPool::new();
+        let sampler_index = samplers.get_or_create(Sampler::default(), context);
+        let sampler = samplers.get_by_index(sampler_index as usize).unwrap();
+
+        let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture atlas bind group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                }
+            ]
+        });
+
+        Self {
+            texture,
+            view,            
+            source,
+            atlas_size,
+            padding_size,            
+            packer: GroupedRectsToPlace::new(),
+            packed_locations: Vec::new(),            
+            samplers: SamplerPool::new(),
+            bind_group,
+            layout,
+            is_dirty: false,
+        }
+    }
+
+    pub fn add_texture(&mut self, view: TextureView, context: &RenderContext) -> Option<TextureHandle> {
+        let sampler_index = self.samplers.get_or_create(view.sampler, context);
+
+        let image = view.to_image()?;
+        let (width, height) = image.dimensions();
+        let padded_width = width + self.padding_size * 2;        
+        let padded_height = height + self.padding_size * 2;
+
+        let texture_id = self.packed_locations.len() as u32;
+        self.packer.push_rect(
+            texture_id, 
+            None, 
+            RectToInsert::new(padded_width, padded_height, 1)
+        );
+
+        let mut target_bins = BTreeMap::new();
+        target_bins.insert(0, rectangle_pack::TargetBin::new(self.atlas_size, self.atlas_size, 1));
+
+        let pack_result = rectangle_pack::pack_rects(
+            &self.packer, 
+            &mut target_bins, 
+            &rectangle_pack::volume_heuristic, 
+            &rectangle_pack::contains_smallest_box
+        ).ok()?;
+
+        let (_, packed_location) = pack_result.packed_locations().get(&texture_id)?;
+        let (x, y) = (packed_location.x(), packed_location.y());
+        
+        copy_with_edge_extrusion(&mut self.source, &image, x, y, self.padding_size);
+        self.write_texture(x, y, width, height, context);
+
+        let unpadded_x = x + self.padding_size;
+        let unpadded_y = y + self.padding_size;
+       
+        let uv_min = TextureCoordinate::new([
+            unpadded_x as f32 / self.atlas_size as f32,
+            unpadded_y as f32 / self.atlas_size as f32,
+        ]);
+        let uv_max = TextureCoordinate::new([
+            (unpadded_x + width) as f32 / self.atlas_size as f32,
+            (unpadded_y + height) as f32 / self.atlas_size as f32,
+        ]);
+
+        self.packed_locations.push(PackedRegion { 
+            x, 
+            y, 
+            width: padded_width, 
+            height: padded_height, 
+            uv_min, 
+            uv_max 
+        });
+
+        let handle = TextureHandle {
+            atlas_index: 0,
+            uv_index: view.uv_index,
+            sampler_index,
+            uv_min,
+            uv_max
+        };
+
+        self.is_dirty = true;
+        Some(handle)
+    }
+
+    pub fn sync(&mut self, context: &RenderContext) {        
+        let sampler_refs = self.samplers.samplers().iter().collect::<Vec<_>>();
+        self.bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture atlas bind group"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::SamplerArray(&sampler_refs),
+                }
+            ]
+        });
+    }
+
+    pub fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
+
+    pub fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
+    }    
+
+    pub fn samplers(&self) -> &SamplerPool {
+        &self.samplers
+    }
+
+    pub fn samplers_mut(&mut self) -> &mut SamplerPool {
+        &mut self.samplers
+    }
+
+    pub fn is_dirty(&mut self) -> bool {
+        let dirty = self.is_dirty;
+        self.is_dirty = false;
+        dirty
+    }
+
+    fn write_texture(&self, x: u32, y: u32, width: u32, height: u32, context: &RenderContext) {
+        context.queue.write_texture(wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,            
+            },
+            bytemuck::cast_slice(
+                &self.source.view(x, y, width, height).to_image()
+            ),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),                       
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            }
+        );        
+    }
+}
+// #[derive(Clone, Debug)]
+// pub struct TextureInstance {
+//     pub texture: Texture,
+//     pub uv_index: u32,
+// }
 
 #[derive(Clone, Debug)]
 pub struct Texture {
@@ -203,7 +579,7 @@ impl Texture {
             &data,
             size,
             wgpu::TextureFormat::Rgba8Unorm,
-            &Sampler::default().desc(),
+            &Sampler::default().to_wgpu_descriptor(),
             Some("placeholder"),
         )
     }
@@ -222,7 +598,7 @@ impl Texture {
             height: dimensions.1,
             depth_or_array_layers: 1,
         };
-        Self::from_bytes(device, queue, &data, size, format, &view.sampler.desc(), label)
+        Self::from_bytes(device, queue, &data, size, format, &view.sampler.to_wgpu_descriptor(), label)
     }
 
     pub fn from_bytes(
@@ -549,5 +925,71 @@ impl CubeTexture {
 
     pub fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
+    }
+}
+
+fn copy_with_edge_extrusion(
+    atlas_image: &mut image::RgbaImage,
+    source: &image::DynamicImage,
+    x: u32,
+    y: u32,
+    padding: u32,
+) {
+    let rgba_source = source.to_rgba8();
+    let (width, height) = source.dimensions();
+
+    // Copy main texture
+    for py in 0..height {
+        for px in 0..width {
+            let pixel = rgba_source.get_pixel(px, py);
+            atlas_image.put_pixel(x + padding + px, y + padding + py, *pixel);
+        }
+    }
+
+    // Extrude top edge
+    for px in 0..width {
+        let edge_pixel = rgba_source.get_pixel(px, 0);
+        for pad in 0..padding {
+            atlas_image.put_pixel(x + padding + px, y + pad, *edge_pixel);
+        }
+    }
+
+    // Extrude bottom edge
+    for px in 0..width {
+        let edge_pixel = rgba_source.get_pixel(px, height - 1);
+        for pad in 1..=padding {
+            atlas_image.put_pixel(x + padding + px, y + padding + height - 1 + pad, *edge_pixel);
+        }
+    }
+
+    // Extrude left edge
+    for py in 0..height {
+        let edge_pixel = rgba_source.get_pixel(0, py);
+        for pad in 0..padding {
+            atlas_image.put_pixel(x + pad, y + padding + py, *edge_pixel);
+        }
+    }
+
+    // Extrude right edge
+    for py in 0..height {
+        let edge_pixel = rgba_source.get_pixel(width - 1, py);
+        for pad in 1..=padding {
+            atlas_image.put_pixel(x + padding + width - 1 + pad, y + padding + py, *edge_pixel);
+        }
+    }
+
+    // Extrude corners
+    let top_left = rgba_source.get_pixel(0, 0);
+    let top_right = rgba_source.get_pixel(width - 1, 0);
+    let bottom_left = rgba_source.get_pixel(0, height - 1);
+    let bottom_right = rgba_source.get_pixel(width - 1, height - 1);
+
+    for py in 0..padding {
+        for px in 0..padding {
+            atlas_image.put_pixel(x + px, y + py, *top_left);
+            atlas_image.put_pixel(x + padding + width + px, y + py, *top_right);
+            atlas_image.put_pixel(x + px, y + padding + height + py, *bottom_left);
+            atlas_image.put_pixel(x + padding + width + px, y + padding + height + py, *bottom_right);
+        }
     }
 }

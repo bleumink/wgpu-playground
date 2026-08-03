@@ -1,23 +1,10 @@
 use crossbeam::channel::{Receiver, Sender};
 use egui_wgpu::Renderer as EguiRenderer;
+use gltf::json::extensions::mesh;
 use uuid::Uuid;
 
 use crate::renderer::{
-    RenderCommand, RenderEvent,
-    asset::AssetBuffer,
-    camera::Camera,
-    context::RenderContext,
-    environment::{EnvironmentMap, HdrLoader},
-    instance::Instance,
-    light::{Light, LightUniform},
-    mesh::{MeshVertex, Scene, TextureCoordinate},
-    pipeline::PipelineCache,
-    pointcloud::{PointVertex, Pointcloud},
-    scene::{DrawScene, RenderId, SceneGraph},
-    texture::Texture,
-    transform::TransformUniform,
-    ui::UiData,
-    vertex::VertexLayoutBuilder,
+    RenderCommand, RenderEvent, asset::AssetBuffer, camera::Camera, component::ComponentStore, context::RenderContext, environment::{EnvironmentMap, HdrLoader}, instance::Instance, light::{Light, LightUniform}, material::{MaterialId, MaterialUniform}, mesh::{MeshVertex, TextureCoordinate}, pipeline::PipelineCache, pointcloud::{PointVertex, Pointcloud}, resource::ResourcePool, scene::{DrawScene, NodeId, RenderId, SceneGraph}, texture::{Texture, TextureAtlas}, transform::TransformUniform, ui::UiData, vertex::VertexLayoutBuilder
 };
 
 const MAT4_SWAP_YZ: glam::Mat4 = glam::Mat4::from_cols_array(&[
@@ -49,6 +36,8 @@ pub struct RenderCore {
     scene: SceneGraph,
     pipeline_cache: PipelineCache,
     egui_renderer: EguiRenderer,
+    resources: ResourcePool,
+
     render_rx: Receiver<RenderCommand>,
     result_tx: Sender<RenderEvent>,
 }
@@ -65,12 +54,15 @@ impl RenderCore {
             context.config.format.add_srgb_suffix(),
             Default::default(),
         );
-        let scene = SceneGraph::new(&context);
+        
+        let scene = SceneGraph::new(&context);        
+        let resources = ResourcePool::new(&context);
+
         let mut pipeline_cache = PipelineCache::new();
 
         let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../res/shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../res/shader copy.wgsl").into()),
         });
 
         let pointcloud_shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -86,18 +78,22 @@ impl RenderCore {
         let render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render pipeline layout"),
             bind_group_layouts: &[
-                &context.texture_bind_group_layout,
+                resources.layout(),
                 &context.camera_bind_group_layout,
                 scene.layout(),
-                &context.environment_bind_group_layout,
+                &context.environment_bind_group_layout,                                                     
             ],
             push_constant_ranges: &[],
         });
 
-        let mesh_vertex_layout = (0..RenderContext::MAX_UV_SETS)
-            .fold(VertexLayoutBuilder::new().push::<MeshVertex>(), |builder, _| {
-                builder.push::<TextureCoordinate>()
-            })
+        // let mesh_vertex_layout = (0..RenderContext::MAX_UV_SETS)
+        //     .fold(VertexLayoutBuilder::new().push::<MeshVertex>(), |builder, _| {
+        //         builder.push::<TextureCoordinate>()
+        //     })
+        //     .push::<Instance>()
+        //     .build();
+
+        let instance_layout = VertexLayoutBuilder::new()
             .push::<Instance>()
             .build();
 
@@ -108,7 +104,7 @@ impl RenderCore {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &mesh_vertex_layout,
+                buffers: &instance_layout,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -203,70 +199,71 @@ impl RenderCore {
         let light_debug_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Debug light pipeline layout"),
             bind_group_layouts: &[
-                &context.texture_bind_group_layout,
+                resources.layout(),
                 &context.camera_bind_group_layout,
                 scene.layout(),
             ],
             push_constant_ranges: &[],
         });
 
-        let light_debug_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Light debug pipeline"),
-            layout: Some(&light_debug_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &light_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &mesh_vertex_layout,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &light_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: context.hdr.format(),
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: Texture::DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        // let light_debug_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        //     label: Some("Light debug pipeline"),
+        //     layout: Some(&light_debug_pipeline_layout),
+        //     vertex: wgpu::VertexState {
+        //         module: &light_shader,
+        //         entry_point: Some("vs_main"),
+        //         compilation_options: Default::default(),
+        //         buffers: &instance_layout,
+        //     },
+        //     fragment: Some(wgpu::FragmentState {
+        //         module: &light_shader,
+        //         entry_point: Some("fs_main"),
+        //         compilation_options: wgpu::PipelineCompilationOptions::default(),
+        //         targets: &[Some(wgpu::ColorTargetState {
+        //             format: context.hdr.format(),
+        //             blend: Some(wgpu::BlendState::REPLACE),
+        //             write_mask: wgpu::ColorWrites::ALL,
+        //         })],
+        //     }),
+        //     primitive: wgpu::PrimitiveState {
+        //         topology: wgpu::PrimitiveTopology::TriangleList,
+        //         strip_index_format: None,
+        //         front_face: wgpu::FrontFace::Ccw,
+        //         cull_mode: Some(wgpu::Face::Back),
+        //         unclipped_depth: false,
+        //         polygon_mode: wgpu::PolygonMode::Fill,
+        //         conservative: false,
+        //     },
+        //     depth_stencil: Some(wgpu::DepthStencilState {
+        //         format: Texture::DEPTH_FORMAT,
+        //         depth_write_enabled: true,
+        //         depth_compare: wgpu::CompareFunction::Less,
+        //         stencil: wgpu::StencilState::default(),
+        //         bias: wgpu::DepthBiasState::default(),
+        //     }),
+        //     multisample: wgpu::MultisampleState {
+        //         count: 1,
+        //         mask: !0,
+        //         alpha_to_coverage_enabled: false,
+        //     },
+        //     multiview: None,
+        //     cache: None,
+        // });
 
         pipeline_cache.insert("mesh", render_pipeline);
         pipeline_cache.insert("pointcloud", pointcloud_pipeline);
-        pipeline_cache.insert("light", light_debug_pipeline);
+        // pipeline_cache.insert("light", light_debug_pipeline);
 
         Ok(Self {
-            is_running: true,
-            context,
+            is_running: true,            
             camera,
             scene,
             pipeline_cache,
             egui_renderer,
+            resources,
             render_rx: render_receiver,
             result_tx: error_sender,
+            context,
         })
     }
 
@@ -275,6 +272,10 @@ impl RenderCore {
     }
 
     fn load_asset(&mut self, asset: AssetBuffer) -> anyhow::Result<()> {
+        let mut encoder = self.context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Loader encoder"),
+        });
+        
         match asset {
             AssetBuffer::EnvironmentMap { buffer, label } => {
                 let loader = HdrLoader::new(&self.context.device);
@@ -283,44 +284,54 @@ impl RenderCore {
                 environment_map.compute_irradiance(&self.context);
                 self.scene.set_environment_map(environment_map);
             }
-            AssetBuffer::Scene(buffer, label) => {
-                let scene = Scene::from_buffer(buffer, &self.context, label.clone());
-                let material_ids = scene
-                    .materials
-                    .into_iter()
-                    .map(|material| self.scene.add_material(material))
+            AssetBuffer::Scene(buffer, label) => {         
+                let material_ids = buffer.iter_materials()
+                    .map(|view| {                        
+                        self.resources.insert_material(view, &mut encoder, &self.context)
+                    })
                     .collect::<Vec<_>>();
-
-                for node in scene.nodes {
-                    let render_id = self.scene.add_mesh(node.mesh, &material_ids);
+                
+                let mesh_ids = buffer.iter_meshes()      
+                    .map(|view| {                  
+                        self.resources.insert_mesh(view, &material_ids, &mut encoder, &self.context)                              
+                    })
+                    .collect::<Vec<_>>();
+                
+                let node_ids = self.scene.import_hierarchy(buffer.iter_nodes(), &mesh_ids, &self.context);
+                for node_id in node_ids {
                     self.result_tx.send(RenderEvent::LoadComplete {
-                        render_id,
-                        transform: Some(node.transform),
+                        node_id,
+                        transform: self.scene.get_transform(&node_id),
                         label: label.clone(),
-                    })?;
-                }
+                    })?;                                        
+                }                
             }
-            AssetBuffer::Pointcloud(buffer, label) => {
-                let pointcloud = Pointcloud::from_buffer(buffer, &self.context, label.clone());
-                let render_id = self.scene.add_pointcloud(pointcloud);
+            AssetBuffer::Pointcloud(buffer, label) => {                
+                // let pointcloud = Pointcloud::from_buffer(buffer, &self.context, label.clone());
+                // let pointcloud_id= self.resources.insert_pointcloud(pointcloud);
+                // let node_id = self.scene.add_pointcloud(pointcloud);
 
-                self.result_tx.send(RenderEvent::LoadComplete {
-                    render_id,
-                    transform: Some(MAT4_SWAP_YZ),
-                    label,
-                })?;
+                // self.result_tx.send(RenderEvent::LoadComplete {
+                //     node_id,
+                //     transform: Some(MAT4_SWAP_YZ),
+                //     label,
+                // })?;
             }
         }
+
+        let command_buffer = encoder.finish();                                
+        self.context.queue.submit(Some(command_buffer));
 
         Ok(())
     }
 
-    fn spawn_asset(&mut self, entity_id: Uuid, render_id: RenderId, transform: glam::Mat4) {
-        self.scene.add_node(entity_id, render_id, transform, &self.context);
+    fn spawn_asset(&mut self, entity_id: Uuid, node_id: NodeId, transform: glam::Mat4) {
+        todo!()
+        // self.scene.add_node(entity_id, render_id, transform, &self.context);
     }
 
     fn spawn_light(&mut self, entity_id: Uuid, light: Light) {
-        self.scene.add_light(entity_id, light, &self.context);
+        // self.scene.add_light(entity_id, light, &self.context);
     }
 
     pub fn render_scene(&self, frame: &mut Frame) {
@@ -352,7 +363,12 @@ impl RenderCore {
             timestamp_writes: None,
         });
 
-        render_pass.draw_scene(&self.scene, &self.camera.bind_group(), &self.pipeline_cache);
+        render_pass.draw_scene(
+            &self.scene, 
+            &self.resources,
+            self.camera.bind_group(), 
+            &self.pipeline_cache
+        );
     }
 
     pub fn render_ui(&mut self, frame: &mut Frame, ui: UiData) {

@@ -1,3 +1,38 @@
+// struct Instance {
+//     uv_offsets: array<u32, 4>,
+//     material_index: u32,
+//     transform_index: u32,
+//     normal_index: u32,
+// }
+
+// @group(0) @binding(0) var<storage> textures: binding_array<texture_2d<f32>>;
+// @group(1) @binding(0) var<uniform> camera: Camera;
+// @group(2) @binding(0) var<storage> transforms: array<mat4x4f>;
+// @group(2) @binding(1) var<storage> normal_matrices: array<mat4x4f>;
+// @group(4) @binding(0) var<storage> positions: array<vec3f>;
+// @group(4) @binding(1) var<storage> normals: array<vec3f>;
+// @group(4) @binding(2) var<storage> tangents: array<vec4f>;
+// @group(4) @binding(3) var<storage> indices: array<u32>;
+// @group(4) @binding(4) var<storage> uv_sets: array<vec2f>;
+// @group(5) @binding(0) var<storage> materials: array<MaterialUniform>;
+
+// @vertex
+// fn vs_main(
+//     @builtin(vertex_index) vertex_index: u32,
+//     @builtin(instance_index) instance_index: u32,
+//     @location(0) instance: Instance,  // From instance buffer
+// ) -> VertexOutput {
+//     let index = indices[vertex_index];
+//     let position = positions[index];
+//     let normal = normals[index];
+//     let tangent = tangents[index];
+    
+//     let transform = transforms[instance.transform_index];
+//     let normal_matrix = normal_matrices[instance.normal_index];
+    
+//     // ... rest of vertex shader
+// }
+
 // Vertex shader
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -176,7 +211,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         let ndf = distribution_ggx(n, h, roughness);
         let g = geometry_smith(n, v, l, roughness);
-        let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
+        let f = fresnel_schlick_roughness(max(dot(h, v), 0.0), f0, roughness);
 
         let denominator = max(4.0 * n_dot_v * n_dot_l, 0.0001);
         let specular = (ndf * g * f) / denominator;
@@ -191,9 +226,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let irradiance = textureSample(irradiance_map, irradiance_sampler, n).rgb;
-    let kd = (vec3<f32>(1.0) - f0) * (1.0 - metallic);
-    let diffuse = irradiance * albedo * kd;
+    let diffuse = irradiance * albedo;
+    let ambient = diffuse * occlusion;
     // let ambient = vec3<f32>(0.001) * albedo * occlusion;
+
     var color = lo + diffuse;
 
     // Tone map and gamma correct
@@ -220,8 +256,8 @@ fn from_transform(matrix: mat4x4<f32>) -> LightModel {
     return model;
 }
 
-fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
-    return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    return f0 + (vec3<f32>(1.0 - roughness) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
 fn distribution_ggx(n: vec3<f32>, h: vec3<f32>, roughness: f32) -> f32 {

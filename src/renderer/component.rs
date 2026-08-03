@@ -30,7 +30,7 @@ pub struct RelationStore<A, B> {
     capacity: usize,
     is_dirty: bool,
     buffer: wgpu::Buffer,
-    // bind_group: wgpu::BindGroup,
+    bind_group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
     _phantom: PhantomData<(A, B)>,
 }
@@ -54,7 +54,7 @@ impl<A, B> RelationStore<A, B> {
             });
 
         let buffer = create_buffer::<u32>(capacity, context);
-        // let bind_group = create_bind_group(&buffer, &layout, context);
+        let bind_group = create_bind_group(&buffer, &layout, context);
 
         Self {
             mapping: Vec::new(),
@@ -62,7 +62,7 @@ impl<A, B> RelationStore<A, B> {
             is_dirty: false,
             buffer,
             layout,
-            // bind_group,
+            bind_group,
             _phantom: PhantomData,
         }
     }
@@ -96,9 +96,9 @@ impl<A, B> RelationStore<A, B> {
         &self.buffer
     }
 
-    // pub fn bind_group(&self) -> &wgpu::BindGroup {
-    //     &self.bind_group
-    // }
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout
@@ -120,7 +120,7 @@ impl<A, B> RelationStore<A, B> {
     fn grow(&mut self, context: &RenderContext) {
         self.capacity *= 2;
         self.buffer = create_buffer::<u32>(self.capacity, context);
-        // self.bind_group = create_bind_group(&self.buffer, &self.layout, context);
+        
         self.sync(context);
         self.is_dirty = true;
     }
@@ -133,7 +133,7 @@ pub struct ComponentStore<T: Pod + Zeroable + Copy> {
     free_indices: Vec<usize>,
     is_dirty: bool,
     buffer: wgpu::Buffer,
-    // bind_group: wgpu::BindGroup,
+    bind_group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
 }
 
@@ -156,7 +156,7 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
             });
 
         let buffer = create_buffer::<T>(capacity, context);
-        // let bind_group = create_bind_group(&buffer, &layout, context);
+        let bind_group = create_bind_group(&buffer, &layout, context);
 
         Self {
             components: Vec::new(),
@@ -165,7 +165,7 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
             free_indices: Vec::new(),
             is_dirty: false,
             buffer,
-            // bind_group,
+            bind_group,
             layout,
         }
     }
@@ -249,9 +249,9 @@ impl<T: Pod + Zeroable + Copy> ComponentStore<T> {
         dirty
     }
 
-    // pub fn bind_group(&self) -> &wgpu::BindGroup {
-    //     &self.bind_group
-    // }
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout

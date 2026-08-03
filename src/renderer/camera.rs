@@ -3,6 +3,7 @@ use wgpu::util::DeviceExt;
 use crate::renderer::context::RenderContext;
 
 pub struct Camera {
+    projection: glam::Mat4,
     uniform: CameraUniform,
     buffer: wgpu::Buffer,
     // layout: wgpu::BindGroupLayout,
@@ -44,6 +45,7 @@ impl Camera {
         });
 
         Self {
+            projection: glam::Mat4::IDENTITY,
             uniform,
             buffer,
             // layout,
@@ -51,11 +53,15 @@ impl Camera {
         }
     }
 
-    pub fn update(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4, context: &RenderContext) {
+    pub fn update_view(&mut self, position: glam::Vec3, view: glam::Mat4, projection: glam::Mat4, context: &RenderContext) {
         self.uniform.update(position, view, projection);
         context
             .queue
             .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
+    }
+
+    pub fn update_projection(&mut self, projection: glam::Mat4) {
+        self.projection = projection;
     }
 
     pub fn bind_group(&self) -> &wgpu::BindGroup {

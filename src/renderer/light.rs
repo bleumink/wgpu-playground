@@ -26,21 +26,23 @@ pub enum Light {
 }
 
 impl Light {
-    pub fn to_light_uniform(&self) -> LightUniform {
+    pub fn to_light_uniform(&self, transform_index: u32) -> LightUniform {
         match self {
             Self::Directional { color, intensity, .. } => LightUniform {
                 color: color.to_array(),
                 kind: 0,
                 intensity: *intensity,
                 cutoff: 0.0,
-                _padding: [0; 2],
+                transform_index,
+                _padding: 0,
             },
             Self::Point { color, intensity, .. } => LightUniform {
                 color: color.to_array(),
                 kind: 1,
                 intensity: *intensity,
                 cutoff: 0.0,
-                _padding: [0; 2],
+                transform_index,
+                _padding: 0,
             },
             Self::Spot {
                 color,
@@ -52,7 +54,8 @@ impl Light {
                 kind: 2,
                 intensity: *intensity,
                 cutoff: *cutoff,
-                _padding: [0; 2],
+                transform_index,
+                _padding: 0,
             },
         }
     }
@@ -90,9 +93,9 @@ impl Light {
         TransformUniform::new(self.to_transform())
     }
 
-    pub fn to_parts(self) -> (LightUniform, TransformUniform) {
-        (self.to_light_uniform(), self.to_transform_uniform())
-    }
+    // pub fn to_parts(self) -> (LightUniform, TransformUniform) {
+    //     (self.to_light_uniform(), self.to_transform_uniform())
+    // }
 }
 
 #[repr(C, align(16))]
@@ -102,17 +105,19 @@ pub struct LightUniform {
     pub cutoff: f32,
     pub intensity: f32,
     pub kind: u32,
-    _padding: [u32; 2],
+    pub transform_index: u32,
+    _padding: u32,
 }
 
 impl LightUniform {
-    pub fn new(kind: u32, color: glam::Vec3, intensity: f32, cutoff: f32) -> Self {
+    pub fn new(kind: u32, color: glam::Vec3, intensity: f32, cutoff: f32, transform_index: u32) -> Self {
         Self {
             color: color.to_array(),
             cutoff,
             intensity,
             kind,
-            _padding: [0; 2],
+            transform_index,
+            _padding: 0,
         }
     }
 }

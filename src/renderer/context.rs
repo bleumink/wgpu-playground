@@ -16,14 +16,16 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    pub const MAX_UV_SETS: usize = 6;
+    pub const ATLAS_SIZE: u32 = 4096;
+    pub const TEXTURE_PADDING_SIZE: u32 = 2;
+    pub const MAX_UV_SETS: usize = 4;
     pub const TEXTURE_COUNT: usize = 5;
 
     pub async fn new(adapter: &wgpu::Adapter, config: wgpu::SurfaceConfiguration) -> anyhow::Result<Self> {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::INDIRECT_FIRST_INSTANCE,
                 required_limits: if cfg!(target_family = "wasm") {
                     wgpu::Limits::downlevel_defaults()
                 } else {

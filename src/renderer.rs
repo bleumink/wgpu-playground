@@ -4,10 +4,7 @@ use crossbeam::channel::Sender;
 use uuid::Uuid;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
-use crate::{
-    renderer::{asset::AssetBuffer, backend::RenderBackend, core::RenderCore, surface::Surface, ui::UiData},
-    // ui::{Ui, UiData},
-};
+use crate::renderer::{asset::AssetBuffer, backend::RenderBackend, core::RenderCore, scene::NodeId, surface::Surface, ui::UiData};
 
 pub use {
     asset::{AssetKind, AssetLoader, ResourcePath},
@@ -24,6 +21,7 @@ mod component;
 mod context;
 mod core;
 mod environment;
+mod resource;
 mod hdr;
 mod instance;
 mod light;
@@ -79,7 +77,7 @@ pub enum RenderCommand {
 pub enum RenderEvent {
     FrameComplete,
     LoadComplete {
-        render_id: RenderId,
+        node_id: NodeId,
         transform: Option<glam::Mat4>,
         label: Option<String>,
     },

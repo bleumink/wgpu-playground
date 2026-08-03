@@ -16,9 +16,27 @@ use crate::renderer::{context::RenderContext, scene::SceneGraph, vertex::Vertex}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct DrawCommand {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub base_vertex: u32,
+    pub first_instance: u32,
+}
+
+impl DrawCommand {
+    pub const STRIDE: usize = std::mem::size_of::<Self>();
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Instance {
+    pub position_offset: u32,
+    pub surface_offset: u32,
+    pub uv_offsets: [u32; 4],
     pub transform_index: u32,
     pub normal_index: u32,
+    pub material_index: u32,      
 }
 
 impl Instance {
@@ -40,31 +58,62 @@ impl Vertex for Instance {
                     offset: std::mem::size_of::<u32>() as u64,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Uint32,
+                },                
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[u32; 2]>() as u64,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Uint32x4,
                 },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[u32; 6]>() as u64,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[u32; 7]>() as u64,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[u32; 8]>() as u64,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Uint32,
+                },                
             ],
         }
     }
 }
 
 pub struct InstancePool {
-    pub buffer: wgpu::Buffer,
+    pub instance_buffer: wgpu::Buffer,
+    pub command_buffer: wgpu::Buffer,
     pub capacity: usize,
     pub cursor: usize,
+    pub count: usize,
 }
 
 impl InstancePool {
     pub fn new(capacity: usize, context: &RenderContext) -> Self {
-        let buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance pool"),
             size: (capacity * Instance::STRIDE) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        let command_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Command buffer"),
+            size: (capacity * DrawCommand::STRIDE) as u64,
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
-            buffer,
+            instance_buffer,
+            command_buffer,
             capacity: capacity.max(1),
             cursor: 0,
+            count: 0,
         }
     }
 
@@ -77,7 +126,7 @@ impl InstancePool {
         let offset = (self.cursor * Instance::STRIDE) as u64;
         context
             .queue
-            .write_buffer(&self.buffer, offset, bytemuck::cast_slice(instances));
+            .write_buffer(&self.instance_buffer, offset, bytemuck::cast_slice(instances));
 
         let start_offset = self.cursor;
         self.cursor = start_offset + size % self.capacity;
@@ -85,11 +134,27 @@ impl InstancePool {
         start_offset
     }
 
+    pub fn upload_commands(&mut self, instances: &[Instance], commands: &[DrawCommand], context: &RenderContext) {
+        context.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));                
+        context.queue.write_buffer(&self.command_buffer, 0, bytemuck::cast_slice(commands));
+        
+        self.cursor = instances.len();        
+        self.count = commands.len();        
+    }
+
     pub fn reset(&mut self) {
         self.cursor = 0;
     }
 
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
+    pub fn instances(&self) -> &wgpu::Buffer {
+        &self.instance_buffer
+    }
+
+    pub fn commands(&self) -> &wgpu::Buffer {
+        &self.command_buffer
+    }
+
+    pub fn count(&self) -> u32 {
+        self.count as u32
     }
 }

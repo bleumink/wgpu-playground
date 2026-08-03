@@ -20,13 +20,15 @@ crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 egui = "0.33.2"
 env_logger = "0.11.8"
 futures-lite = "2.6.1"
-glam = { version = "0.30.5", features = ["serde"] }
+glam = { version = "0.30.5", features = ["bytemuck", "serde"] }
 gltf = "1.4.1"
 half = { version = "2.7.1", features = ["bytemuck"] }
 image = { version = "0.25.8", features = ["exr", "hdr"] }
 instant = "0.1.13"
+itertools = "0.14.0"
 las = { version = "0.9.6", features = ["laz"] }
 log = "0.4.28"
+rectangle-pack = "0.4.2"
 reqwest = "0.12.23"
 rfd = { version = "0.15.4", features = ["file-handle-inner"] }
 serde = "1.0.226"

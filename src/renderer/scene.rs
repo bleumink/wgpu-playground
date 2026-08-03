@@ -1,51 +1,119 @@
-use std::{collections::HashMap, hash::Hash, ops::Range};
+use std::{collections::{HashMap, HashSet}, hash::Hash, ops::Range};
 
+use itertools::Itertools;
 use uuid::Uuid;
 
-use crate::renderer::{
-    component::{ComponentId, ComponentStore, HostComponentStore, RelationStore},
-    context::RenderContext,
-    environment::{self, EnvironmentMap},
-    instance::{Instance, InstancePool},
-    light::{Light, LightId, LightUniform},
-    material::Material,
-    mesh::{DrawMesh, Mesh, Primitive, Scene},
-    pipeline::PipelineCache,
-    pointcloud::{DrawPointcloud, Pointcloud},
-    transform::TransformUniform,
-};
+use crate::{entity::EntityId, renderer::{
+    component::{ComponentId, ComponentStore, RelationStore}, context::RenderContext, environment::EnvironmentMap, instance::{DrawCommand, Instance, InstancePool}, light::{Light, LightId, LightUniform}, material::Material, mesh::{Mesh, MeshVertex, MeshView, NodeView, Primitive, PrimitiveView, TextureCoordinate}, pipeline::PipelineCache, pointcloud::{DrawPointcloud, Pointcloud}, resource::{ResourceId, ResourcePool}, transform::TransformUniform
+}};
 
-pub type MaterialId = Uuid;
 pub type GeometryId = Uuid;
 pub type RenderId = Uuid;
+pub type NodeId = Uuid;
 
-pub enum Renderable {
-    Mesh(Vec<PrimitiveHandle>),
-    Pointcloud(PointcloudHandle),
+pub trait DrawScene<'a> {
+    fn draw_scene(
+        &mut self,
+        scene: &'a SceneGraph,
+        resources: &'a ResourcePool,
+        camera_bind_group: &'a wgpu::BindGroup,
+        pipeline_cache: &'a PipelineCache,
+    );
 }
 
-impl Renderable {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Mesh(_) => "mesh",
-            Self::Pointcloud(_) => "pointcloud",
-        }
+impl<'a, 'b> DrawScene<'b> for wgpu::RenderPass<'a>
+where
+    'b: 'a,
+{
+    fn draw_scene(
+        &mut self,
+        scene: &'b SceneGraph,
+        resources: &'b ResourcePool,
+        camera_bind_group: &'b wgpu::BindGroup,
+        pipeline_cache: &'b PipelineCache,
+    ) {
+        self.set_bind_group(1, camera_bind_group, &[]);
+
+        self.set_pipeline(scene.environment_map.pipeline());
+        self.set_bind_group(0, scene.environment_map.bind_group(), &[]);
+        self.draw(0..3, 0..1);
+        
+        self.set_bind_group(0, resources.bind_group(), &[]);
+        self.set_bind_group(2, scene.bind_group(), &[]);
+        self.set_bind_group(3, scene.environment_map.bind_group(), &[]);
+
+        let pipeline = pipeline_cache.get("mesh").unwrap();
+        self.set_pipeline(pipeline);
+        
+        self.set_vertex_buffer(0, scene.instance_pool.instances().slice(..));
+        self.set_index_buffer(resources.indices().buffer().slice(..), wgpu::IndexFormat::Uint32);
+        
+        self.multi_draw_indexed_indirect(
+            scene.instance_pool.commands(), 
+            0, 
+            scene.instance_pool.count()
+        );
+        
+
+        // for batch in &scene.render_batches {
+        //     let pipeline = pipeline_cache.get(batch.key.pipeline_id).unwrap();
+        //     self.set_pipeline(pipeline);
+
+        //     if let Some(renderable) = scene.renderables.get(&batch.key.render_id) {
+        //         match renderable {
+        //             Renderable::Mesh(handles) => {
+        //                 self.set_vertex_buffer(7, scene.instance_pool.buffer().slice(..));
+        //                 handles.iter().for_each(|handle| {
+        //                     let geometry = scene.geometries.get_by_id(handle.geometry_index).unwrap();
+        //                     let material = scene.materials.get_by_id(handle.material_index).unwrap();
+
+        //                     if let Geometry::Primitive(primitive) = geometry {
+        //                         self.draw_primitive_instanced(primitive, material, batch.instance_range());
+        //                     }
+        //                 });
+        //             }
+        //             Renderable::Pointcloud(handle) => {
+        //                 self.set_vertex_buffer(1, scene.instance_pool.buffer().slice(..));
+        //                 let geometry = scene.geometries.get_by_id(handle.geometry_index).unwrap();
+
+        //                 if let Geometry::Pointcloud(pointcloud) = geometry {
+        //                     self.draw_pointcloud(pointcloud, batch.instance_range());
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
 
-pub enum Geometry {
-    Primitive(Primitive),
-    Pointcloud(Pointcloud),
-}
+// pub enum Renderable {
+//     Mesh(Vec<PrimitiveHandle>),
+//     Pointcloud(PointcloudHandle),
+// }
 
-pub struct PrimitiveHandle {
-    pub geometry_index: ComponentId<Geometry>,
-    pub material_index: ComponentId<Material>,
-}
+// impl Renderable {
+//     pub fn as_str(&self) -> &'static str {
+//         match self {
+//             Self::Mesh(_) => "mesh",
+//             Self::Pointcloud(_) => "pointcloud",
+//         }
+//     }
+// }
 
-pub struct PointcloudHandle {
-    pub geometry_index: ComponentId<Geometry>,
-}
+// pub enum Geometry {
+//     Primitive(Primitive),
+//     Pointcloud(Pointcloud),
+// }
+
+
+// pub struct PrimitiveHandle {
+//     pub geometry_index: ComponentId<Geometry>,
+//     pub material_index: ComponentId<Material>,
+// }
+
+// pub struct PointcloudHandle {
+//     pub geometry_index: ComponentId<Geometry>,
+// }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -71,25 +139,29 @@ pub struct RenderBatch {
     pub instance_count: u32,
 }
 
-impl RenderBatch {
-    pub fn instance_range(&self) -> Range<u32> {
-        self.instance_offset..self.instance_offset + self.instance_count
-    }
-}
+// impl RenderBatch {
+//     pub fn instance_range(&self) -> Range<u32> {
+//         self.instance_offset..self.instance_offset + self.instance_count
+//     }
+// }
 
 pub struct SceneGraph {
-    pub nodes: HostComponentStore<RenderId>,
-    pub renderables: HostComponentStore<Renderable>,
-    pub geometries: HostComponentStore<Geometry>,
-    pub materials: HostComponentStore<Material>,
-
-    pub normals: ComponentStore<NormalUniform>,
-    pub transforms: ComponentStore<TransformUniform>,
+    pub nodes: HashSet<NodeId>,
+    pub root_nodes: HashSet<NodeId>,    
+    pub node_to_parent: HashMap<NodeId, NodeId>,
+    pub node_to_children: HashMap<NodeId, Vec<NodeId>>,
+    pub node_to_mesh: HashMap<NodeId, ResourceId>,
+        
+    pub transforms: ComponentStore<TransformUniform>,    
+    pub normals: ComponentStore<NormalUniform>,    
     pub lights: ComponentStore<LightUniform>,
-
-    pub node_transform_index: RelationStore<RenderId, TransformUniform>,
-    pub node_normal_index: RelationStore<RenderId, NormalUniform>,
-    pub lights_transform_index: RelationStore<LightUniform, TransformUniform>,
+            
+    pub active_nodes: HashMap<EntityId, NodeId>,
+    pub entity_to_transform: HashMap<EntityId, ComponentId<TransformUniform>>,
+    pub entity_to_normal: HashMap<EntityId, ComponentId<NormalUniform>>,
+    pub entity_to_light: HashMap<EntityId, ComponentId<LightUniform>>,
+    
+    // pub lights_transform_index: RelationStore<LightUniform, TransformUniform>,
 
     pub environment_map: EnvironmentMap,
     pub instance_pool: InstancePool,
@@ -118,7 +190,7 @@ impl SceneGraph {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -136,16 +208,6 @@ impl SceneGraph {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                 ],
             });
 
@@ -155,49 +217,50 @@ impl SceneGraph {
         let normals = ComponentStore::new(64, wgpu::ShaderStages::VERTEX, context);
         let lights = ComponentStore::new(64, wgpu::ShaderStages::FRAGMENT, context);
 
-        let node_transform_index = RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
-        let node_normal_index = RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
-        let lights_transform_index = RelationStore::new(64, wgpu::ShaderStages::FRAGMENT, context);
+        // let node_parent = RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
+        // let node_mesh = RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
+        
+        // let node_transform = RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
+        // let node_normal= RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
+        // let node_light= RelationStore::new(64, wgpu::ShaderStages::VERTEX, context);
+        // let lights_transform_index = RelationStore::new(64, wgpu::ShaderStages::FRAGMENT, context);
 
-        let mut renderables = HostComponentStore::new();
-        let mut geometries = HostComponentStore::new();
-        let materials = HostComponentStore::new();
-
-        let mesh = Mesh::unit_cube(context);
-        let handles = mesh
-            .primitives
-            .into_iter()
-            .map(|primitive| PrimitiveHandle {
-                geometry_index: geometries.add(GeometryId::new_v4(), Geometry::Primitive(primitive)),
-                material_index: ComponentId::new(0),
-            })
-            .collect::<Vec<_>>();
+        // let mesh = Mesh::unit_cube(context);
+        // let handles = mesh
+        //     .primitives
+        //     .into_iter()
+        //     .map(|primitive| PrimitiveHandle {
+        //         geometry_index: geometries.add(GeometryId::new_v4(), Geometry::Primitive(primitive)),
+        //         material_index: ComponentId::new(0),
+        //     })
+        //     .collect::<Vec<_>>();
         let debug_id = RenderId::new_v4();
-        renderables.add(debug_id, Renderable::Mesh(handles));
+        // renderables.add(debug_id, Renderable::Mesh(handles));
 
         let bind_group = Self::create_bind_group(
             &[
                 transforms.buffer(),
                 normals.buffer(),
                 lights.buffer(),
-                lights_transform_index.buffer(),
+                // lights_transform_index.buffer(),
             ],
             &layout,
             context,
         );
 
         Self {
-            nodes: HostComponentStore::new(),
+            nodes: HashSet::new(),
+            root_nodes: HashSet::new(),
+            active_nodes: HashMap::new(),
+            node_to_children: HashMap::new(),
+            node_to_parent: HashMap::new(),
+            node_to_mesh: HashMap::new(),
+            entity_to_transform: HashMap::new(),
+            entity_to_normal: HashMap::new(),
+            entity_to_light: HashMap::new(),
             transforms,
-            renderables,
-            node_transform_index,
             lights,
-            lights_transform_index,
             normals,
-            node_normal_index,
-
-            geometries,
-            materials,
 
             environment_map: EnvironmentMap::default(context),
             instance_pool,
@@ -208,60 +271,106 @@ impl SceneGraph {
         }
     }
 
-    pub fn add_material(&mut self, material: Material) -> ComponentId<Material> {
-        self.materials.add(MaterialId::new_v4(), material)
+    // pub fn add_material(&mut self, material: Material) -> ComponentId<Material> {
+    //     self.materials.add(MaterialId::new_v4(), material)
+    // }
+
+    // pub fn add_mesh(&mut self, mesh: MeshView, material_ids: &[u32], context: &RenderContext) -> MeshId {                
+    //     self.meshes.insert(mesh, material_ids, context)
+        
+        
+        // let handles = mesh
+        //     .primitives
+        //     .into_iter()
+        //     .map(|primitive| PrimitiveHandle {
+        //         material_index: material_components[primitive.material_index],
+        //         geometry_index: self.add_geometry(Geometry::Primitive(primitive)),
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // let renderable = Renderable::Mesh(handles);
+        // self.add_renderable(renderable)
+    // }
+
+    // pub fn add_pointcloud(&mut self, pointcloud: Pointcloud) -> RenderId {
+    //     let renderable = Renderable::Pointcloud(PointcloudHandle {
+    //         geometry_index: self.add_geometry(Geometry::Pointcloud(pointcloud)),
+    //     });
+    //     self.add_renderable(renderable)
+    // }
+
+    // pub fn add_geometry(&mut self, geometry: Geometry) -> ComponentId<Geometry> {
+    //     self.geometries.add(GeometryId::new_v4(), geometry)
+    // }
+
+    // pub fn add_renderable(&mut self, renderable: Renderable) -> RenderId {
+    //     let id = RenderId::new_v4();
+    //     self.renderables.add(id, renderable);
+    //     id
+    // }    
+
+    pub fn import_hierarchy(&mut self, root_nodes: impl Iterator<Item = NodeView>, mesh_ids: &[ResourceId], context: &RenderContext) -> Vec<NodeId> {
+        root_nodes.map(|node| {
+            self.add_node(node, mesh_ids, None, context)
+        })
+        .collect()
     }
 
-    pub fn add_mesh(&mut self, mesh: Mesh, material_components: &[ComponentId<Material>]) -> RenderId {
-        let handles = mesh
-            .primitives
-            .into_iter()
-            .map(|primitive| PrimitiveHandle {
-                material_index: material_components[primitive.material_index],
-                geometry_index: self.add_geometry(Geometry::Primitive(primitive)),
-            })
-            .collect::<Vec<_>>();
-
-        let renderable = Renderable::Mesh(handles);
-        self.add_renderable(renderable)
+    pub fn get_transform(&self, id: &NodeId) -> Option<glam::Mat4> {        
+        self.transforms.get(id).map(|uniform| uniform.to_mat4())
     }
 
-    pub fn add_pointcloud(&mut self, pointcloud: Pointcloud) -> RenderId {
-        let renderable = Renderable::Pointcloud(PointcloudHandle {
-            geometry_index: self.add_geometry(Geometry::Pointcloud(pointcloud)),
-        });
-        self.add_renderable(renderable)
+    pub fn spawn_node(&mut self, entity_id: EntityId, node_id: NodeId, transform: glam::Mat4, context: &RenderContext) {
+        self.active_nodes.insert(entity_id, node_id);
+        
+        let transform_uniform = TransformUniform::new(transform);
+        let transform_id = self.transforms.add(entity_id, transform_uniform, context);
+        self.node_to_transform.insert(entity_id, transform_id);
+
+        let normal_uniform = NormalUniform::new(transform);
+        let normal_id = self.normals.add(entity_id, normal_uniform, context);
+        self.node_to_normal.insert(entity_id, normal_id);
     }
 
-    pub fn add_geometry(&mut self, geometry: Geometry) -> ComponentId<Geometry> {
-        self.geometries.add(GeometryId::new_v4(), geometry)
-    }
+    pub fn add_node(&mut self, node: NodeView, mesh_ids: &[ResourceId], parent: Option<NodeId>, context: &RenderContext) -> NodeId {
+        let id = NodeId::new_v4();
+        self.nodes.insert(id);
+        
+        let transform_uniform = TransformUniform::new(node.transform);        
+        let transform_index = self.transforms.add(id, transform_uniform, context);
+        self.node_to_transform.insert(id, transform_index);
+        
+        if let Some(index) = node.mesh_index {                                    
+            let mesh_id = mesh_ids[index];
+            self.node_to_mesh.insert(id, mesh_id);
+        }
 
-    pub fn add_renderable(&mut self, renderable: Renderable) -> RenderId {
-        let id = RenderId::new_v4();
-        self.renderables.add(id, renderable);
+        if let Some(parent_id) = parent {
+            self.node_to_parent.insert(id, parent_id);
+            self.node_to_children
+                .entry(parent_id)
+                .or_default()
+                .push(id);
+        } else {
+            self.root_nodes.insert(id);
+        }
+
+        for child in node.children {
+            self.add_node(child, mesh_ids, Some(id), context);
+        }
+    
+        // self.build_render_batches(context);
         id
     }
 
-    pub fn add_node(&mut self, entity: Uuid, handle: RenderId, transform: glam::Mat4, context: &RenderContext) {
-        let transform_uniform = TransformUniform::new(transform);
-        let transform_index = self.transforms.add(entity, transform_uniform, context);
+    pub fn add_light(&mut self, entity_id: Uuid, light: Light, context: &RenderContext) {
+        let transform = TransformUniform::new(light.to_transform());
+        let transform_id = self.transforms.add(entity_id, transform, context);
 
-        let node_index = self.nodes.add(entity, handle);
-        self.node_transform_index.link(node_index, transform_index, context);
+        let uniform = light.to_light_uniform(transform_id.index());        
+        let light_id = self.lights.add(entity_id, uniform, context);
 
-        let normal_uniform = NormalUniform::new(transform);
-        let normal_index = self.normals.add(entity, normal_uniform, context);
-        self.node_normal_index.link(node_index, normal_index, context);
-
-        self.build_render_batches(context);
-    }
-
-    pub fn add_light(&mut self, entity: Uuid, light: Light, context: &RenderContext) {
-        let (uniform, transform) = light.to_parts();
-        let transform_index = self.transforms.add(entity, transform, context);
-        let light_index = self.lights.add(entity, uniform, context);
-        self.lights_transform_index.link(light_index, transform_index, context);
+        self.entity_to_light.insert(entity_id, light_id);
     }
 
     pub fn set_environment_map(&mut self, environment_map: EnvironmentMap) {
@@ -276,80 +385,142 @@ impl SceneGraph {
         &self.bind_group
     }
 
-    pub fn build_render_batches(&mut self, context: &RenderContext) {
-        let mut batches: HashMap<BatchKey, Vec<Instance>> = HashMap::new();
+    pub fn build_draw_commands(&mut self, meshes: &ResourcePool, context: &RenderContext) {
+        let mut instances = Vec::new();
+        let mut commands = Vec::new();
 
-        // Nodes
-        for (entity, render_index, render_id) in self.nodes.iter_with_index() {
-            if let Some(transform_index) = self.node_transform_index.get_mapping(render_index)
-                && let Some(normal_index) = self.node_normal_index.get_mapping(render_index)
-            {
-                if let Some(renderable) = self.renderables.get(render_id) {
-                    let pipeline_id = renderable.as_str();
-                    let key = BatchKey {
-                        render_id: *render_id,
-                        pipeline_id,
+        let mesh_to_nodes: HashMap<ResourceId, Vec<NodeId>> = self.nodes
+            .iter()
+            .fold(HashMap::new(), |mut accumulator, node_id| {
+                let mesh_id = match self.node_to_mesh.get(node_id) {
+                    Some(id) => id,
+                    None => return accumulator, 
+                };
+                            
+                accumulator.entry(*mesh_id).or_default().push(*node_id);
+                accumulator
+        });
+
+        for (mesh_id, node_ids) in &mesh_to_nodes {
+            let mesh_handle = match meshes.get_mesh_handle(mesh_id) {
+                Some(handle) => handle,
+                None => continue
+            };
+            
+            for primitive in &mesh_handle.primitives {
+                let first_instance = instances.len() as u32;
+
+                for node_id in node_ids {
+                    let transform_index = match self.node_to_transform.get(node_id) {
+                        Some(id) => id.index(),
+                        None => continue
                     };
 
-                    batches.entry(key).or_default().push(Instance {
+                    let normal_index = match self.node_to_normal.get(node_id) {
+                        Some(id) => id.index(),
+                        None => continue
+                    };
+
+                    let instance = Instance {
+                        position_offset: primitive.position_index,
+                        surface_offset: primitive.surface_index,
+                        uv_offsets: primitive.uv_indices,
+                        material_index: primitive.material_index,
                         transform_index,
                         normal_index,
-                    });
-                }
-            }
-        }
-
-        // Lights - Debug
-        for (light_id, light_index, uniform) in self.lights.iter_with_index() {
-            if uniform.kind != 1 {
-                continue;
-            }
-
-            if let Some(transform_index) = self.lights_transform_index.get_mapping(light_index) {
-                if let Some(renderable) = self.renderables.get(&self.debug_id) {
-                    let key = BatchKey {
-                        render_id: self.debug_id,
-                        pipeline_id: "light",
                     };
 
-                    batches.entry(key).or_default().push(Instance {
-                        transform_index,
-                        normal_index: 0,
-                    });
+                    instances.push(instance);
+                }
+
+                let instance_count = (instances.len() as u32) - first_instance;
+                if instance_count > 0 {
+                    let command = DrawCommand {
+                        index_count: primitive.num_elements,
+                        instance_count,
+                        first_index: primitive.first_index,
+                        base_vertex: 0,
+                        first_instance,
+                    };
+
+                    commands.push(command);
                 }
             }
         }
 
-        let mut render_batches = Vec::new();
-        for (key, instances) in batches {
-            let instance_offset = self.instance_pool.upload(&instances, context);
-            let instance_count = instances.len();
-
-            render_batches.push(RenderBatch {
-                key,
-                instance_offset: instance_offset as u32,
-                instance_count: instance_count as u32,
-            })
-        }
-
-        render_batches.sort_by_key(|batch| (batch.key.pipeline_id, batch.key.render_id));
-        self.render_batches = render_batches;
+        self.instance_pool.upload_commands(&instances, &commands, context);
     }
+
+    // pub fn build_render_batches(&mut self, context: &RenderContext) {
+    //     let mut batches: HashMap<BatchKey, Vec<Instance>> = HashMap::new();
+
+    //     // Nodes
+    //     for (entity, render_index, render_id) in self.nodes.iter_with_index() {
+    //         if let Some(transform_index) = self.node_transform_index.get_mapping(render_index)
+    //             && let Some(normal_index) = self.node_normal_index.get_mapping(render_index)
+    //         {
+    //             if let Some(renderable) = self.renderables.get(render_id) {
+    //                 let pipeline_id = renderable.as_str();
+    //                 let key = BatchKey {
+    //                     render_id: *render_id,
+    //                     pipeline_id,
+    //                 };
+
+    //                 batches.entry(key).or_default().push(Instance {
+    //                     transform_index,
+    //                     normal_index,
+    //                 });
+    //             }
+    //         }
+    //     }
+
+    //     // Lights - Debug
+    //     for (light_id, light_index, uniform) in self.lights.iter_with_index() {
+    //         if uniform.kind != 1 {
+    //             continue;
+    //         }
+
+    //         if let Some(transform_index) = self.lights_transform_index.get_mapping(light_index) {
+    //             if let Some(renderable) = self.renderables.get(&self.debug_id) {
+    //                 let key = BatchKey {
+    //                     render_id: self.debug_id,
+    //                     pipeline_id: "light",
+    //                 };
+
+    //                 batches.entry(key).or_default().push(Instance {
+    //                     transform_index,
+    //                     normal_index: 0,
+    //                 });
+    //             }
+    //         }
+    //     }
+
+    //     let mut render_batches = Vec::new();
+    //     for (key, instances) in batches {
+    //         let instance_offset = self.instance_pool.upload(&instances, context);
+    //         let instance_count = instances.len();
+
+    //         render_batches.push(RenderBatch {
+    //             key,
+    //             instance_offset: instance_offset as u32,
+    //             instance_count: instance_count as u32,
+    //         })
+    //     }
+
+    //     render_batches.sort_by_key(|batch| (batch.key.pipeline_id, batch.key.render_id));
+    //     self.render_batches = render_batches;
+    // }
 
     pub fn sync(&mut self, context: &RenderContext) {
         if self.transforms.is_dirty()
-            || self.lights.is_dirty()
-            || self.node_transform_index.is_dirty()
-            || self.lights_transform_index.is_dirty()
-            || self.normals.is_dirty()
-            || self.node_normal_index.is_dirty()
+            || self.lights.is_dirty()                        
+            || self.normals.is_dirty()            
         {
             let bind_group = Self::create_bind_group(
                 &[
                     self.transforms.buffer(),
                     self.normals.buffer(),
                     self.lights.buffer(),
-                    self.lights_transform_index.buffer(),
                 ],
                 &self.layout,
                 context,
@@ -378,66 +549,5 @@ impl SceneGraph {
             layout,
             entries: &entries,
         })
-    }
-}
-
-pub trait DrawScene<'a> {
-    fn draw_scene(
-        &mut self,
-        scene: &'a SceneGraph,
-        camera_bind_group: &'a wgpu::BindGroup,
-        pipeline_cache: &'a PipelineCache,
-    );
-}
-
-impl<'a, 'b> DrawScene<'b> for wgpu::RenderPass<'a>
-where
-    'b: 'a,
-{
-    fn draw_scene(
-        &mut self,
-        scene: &'b SceneGraph,
-        camera_bind_group: &'b wgpu::BindGroup,
-        pipeline_cache: &'b PipelineCache,
-    ) {
-        self.set_bind_group(1, camera_bind_group, &[]);
-        
-        self.set_pipeline(scene.environment_map.pipeline());
-        self.set_bind_group(0, scene.environment_map.bind_group(), &[]);
-        self.draw(0..3, 0..1);
-
-        self.set_bind_group(2, scene.bind_group(), &[]);
-        self.set_bind_group(3, scene.environment_map.bind_group(), &[]);
-
-        self.set_vertex_buffer(7, scene.instance_pool.buffer().slice(..));
-
-        for batch in &scene.render_batches {
-            let pipeline = pipeline_cache.get(batch.key.pipeline_id).unwrap();
-            self.set_pipeline(pipeline);
-
-            if let Some(renderable) = scene.renderables.get(&batch.key.render_id) {
-                match renderable {
-                    Renderable::Mesh(handles) => {
-                        self.set_vertex_buffer(7, scene.instance_pool.buffer().slice(..));
-                        handles.iter().for_each(|handle| {
-                            let geometry = scene.geometries.get_by_id(handle.geometry_index).unwrap();
-                            let material = scene.materials.get_by_id(handle.material_index).unwrap();
-
-                            if let Geometry::Primitive(primitive) = geometry {
-                                self.draw_primitive_instanced(primitive, material, batch.instance_range());
-                            }
-                        });
-                    }
-                    Renderable::Pointcloud(handle) => {
-                        self.set_vertex_buffer(1, scene.instance_pool.buffer().slice(..));
-                        let geometry = scene.geometries.get_by_id(handle.geometry_index).unwrap();
-
-                        if let Geometry::Pointcloud(pointcloud) = geometry {
-                            self.draw_pointcloud(pointcloud, batch.instance_range());
-                        }
-                    }
-                }
-            }
-        }
     }
 }
